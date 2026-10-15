@@ -1,0 +1,385 @@
+#!/usr/bin/env dotnet
+// Builds the benchmark targets of plan v3 section 10 as tagged, labeled images, each from a clean `git archive` of
+// the exact commit it claims, so bench/run can record every target's identity (image ID and commit) in its reports.
+//
+//   bench/images                           build whichever targets are missing (or carry another revision)
+//   bench/images --only rust,rust-v0.1.1   just these targets
+//   bench/images --rebuild                 rebuild even when the tag already holds the right revision
+//   bench/images --cpus 4                  cap each build at 4 CPUs (a CFS quota; the machine may be busy)
+//   bench/images --dry-run                 print what would be built, and how
+//
+// Targets (docs/benchmarks.md):
+//   reference    campfire-reference:app   Rails at the reference/ submodule's pinned commit, built from
+//                                         parity/docker/reference.Dockerfile as parity/bin/reference builds it
+//   rust         campfire-rust:3fe9f61    the Rust port's parity commit
+//   rust-v0.1.1  campfire-rust:v0.1.1     the Rust port's published release: diverged from Rails
+//   rust-main    campfire-rust:ccece30    pinned Rust main; workload differences are reported separately
+//   dotnet-aot   campfire-dotnet:aot      this repository at --dotnet-rev (default HEAD), /Dockerfile's `aot` stage
+//   dotnet-jit   campfire-dotnet:jit      the same commit, /Dockerfile's `jit` stage
+//
+// Sources: the Rust repository (RUST_REPO or --rust-repo, default ../once-campfire-rust beside this repository) and
+// the Rails repository for the reference/ trees the Rust and .NET builds copy (REFERENCE_REPO or --reference-repo,
+// default the reference/ submodule). Both are only read (`git archive`): no worktree, checkout or branch changes.
+// Build contexts go to bench/.work/src/<target>-<commit>/ (ignored). Every image gets the labels
+// org.opencontainers.image.revision (the full commit), org.opencontainers.image.version and campfire.bench.target, and
+// the GIT_REVISION and APP_VERSION build arguments the Dockerfiles turn into X-Rev and X-Version.
+// Exit codes: 0 every target built or kept, 1 a build failed, 2 bad usage.
+#:property RestorePackagesWithLockFile=false
+#:include ../eng/lib/Repository.cs
+#:include ../eng/lib/Commands.cs
+#:include ../eng/lib/ArgumentReader.cs
+
+using System.Globalization;
+using System.Security.Cryptography;
+
+return await BenchImages.RunAsync( args ).ConfigureAwait( false );
+
+/// <summary>
+/// One benchmark target. <paramref name="Commit"/> is what the image must be built from; <paramref name="Kind"/> picks the
+/// source repository and build recipe.
+/// </summary>
+internal sealed record ImageTarget( string Name, string Tag, TargetKind Kind, string Commit, string Version, string? Stage );
+
+internal enum TargetKind
+{
+    Reference,
+    Rust,
+    Dotnet,
+}
+
+internal static class BenchImages
+{
+    private const string RailsCommit = "90b330024dec3e757c79b6a7e6568f93da8e3148";
+    private const string RustParityCommit = "3fe9f61dcd6930b597170e1ea2c7b7604c3570ce";
+    private const string RustReleaseCommit = "080f9035141ac09e1db81476a1b229ed24f08d8f";
+    private const string RustMainCommit = "ccece30e8e160d8c3e05bf395ee55ee35962093b";
+    private const string RevisionLabel = "org.opencontainers.image.revision";
+    private const string VersionLabel = "org.opencontainers.image.version";
+    private const string TargetLabel = "campfire.bench.target";
+    private const string CpuPeriodMicroseconds = "100000";
+
+    public static async Task<int> RunAsync( string[] args )
+    {
+        var options = BuildOptions.Parse( args );
+        if ( options is null )
+        {
+            return 2;
+        }
+
+        var repo = Repository.Root;
+        List<ImageTarget> targets =
+        [
+            new( "reference", "campfire-reference:app", TargetKind.Reference, RailsCommit, RailsCommit[..7], null ),
+            new( "rust", "campfire-rust:3fe9f61", TargetKind.Rust, RustParityCommit, RustParityCommit[..7], null ),
+            new( "rust-v0.1.1", "campfire-rust:v0.1.1", TargetKind.Rust, RustReleaseCommit, "v0.1.1", null ),
+            new( "rust-main", "campfire-rust:ccece30", TargetKind.Rust, RustMainCommit, RustMainCommit[..7], null ),
+        ];
+
+        var unknown = options.Only.Except( targets.Select( target => target.Name ).Concat( ["dotnet-aot", "dotnet-jit"] ) ).ToList( );
+        if ( unknown.Count > 0 )
+        {
+            await Console.Error.WriteLineAsync( $"bench/images: unknown target(s) {string.Join( ", ", unknown )}" ).ConfigureAwait( false );
+            return 2;
+        }
+
+        if ( options.Selects( "dotnet-aot", "dotnet-jit" ) )
+        {
+            // Rust/reference selections do not require a .NET commit on an unborn branch.
+            var revision = await Commands.CaptureAsync( "git", ["-C", repo, "rev-parse", $"{options.DotnetRevision}^{{commit}}"] )
+                .ConfigureAwait( false );
+            if ( !revision.Succeeded )
+            {
+                await Console.Error.WriteLineAsync(
+                        $"bench/images: .NET revision '{options.DotnetRevision}' does not resolve to a commit; pass --dotnet-rev with an existing commit" )
+                    .ConfigureAwait( false );
+                return 2;
+            }
+
+            var dotnetCommit = revision.Output.Trim( );
+            var dotnetShort = dotnetCommit[..7];
+            targets.AddRange( [
+                new( "dotnet-aot", "campfire-dotnet:aot", TargetKind.Dotnet, dotnetCommit, dotnetShort, "aot" ),
+                new( "dotnet-jit", "campfire-dotnet:jit", TargetKind.Dotnet, dotnetCommit, dotnetShort, "jit" ),
+            ] );
+            var dirty = await Commands.RequireAsync( "git", ["-C", repo, "status", "--porcelain", "--", "src", "Dockerfile", "bin", "vendor", "schema.sql"] )
+                .ConfigureAwait( false );
+            if ( dirty.Length > 0 )
+            {
+                Console.WriteLine( "bench/images: note: uncommitted changes under src/, bin/ or the Dockerfile are NOT in the .NET images; "
+                    + $"they build {dotnetShort} as committed" );
+            }
+        }
+
+        var failed = false;
+        foreach ( var target in targets.Where( target => options.Selects( target.Name ) ) )
+        {
+            failed |= !await EnsureAsync( target, options, repo ).ConfigureAwait( false );
+        }
+
+        Console.WriteLine( );
+        Console.WriteLine( "| Target | Tag | Image ID | Revision | Version | Created |" );
+        Console.WriteLine( "|---|---|---|---|---|---|" );
+        foreach ( var target in targets.Where( target => options.Selects( target.Name ) ) )
+        {
+            var identity = await InspectAsync( target.Tag ).ConfigureAwait( false );
+            Console.WriteLine( identity is null
+                ? $"| {target.Name} | {target.Tag} | (missing) | | | |"
+                : $"| {target.Name} | {target.Tag} | {identity.Id[..19]} | {identity.Revision} | {identity.Version} | {identity.Created} |" );
+        }
+
+        return failed ? 1 : 0;
+    }
+
+    private static async Task<bool> EnsureAsync( ImageTarget target, BuildOptions options, string repo )
+    {
+        var identity = await InspectAsync( target.Tag ).ConfigureAwait( false );
+        if ( identity is not null && identity.Revision == target.Commit && !options.Rebuild )
+        {
+            Console.WriteLine( $"bench/images: {target.Name}: keeping {target.Tag} ({identity.Id[..19]}, revision {target.Commit[..7]})" );
+            return true;
+        }
+
+        Console.WriteLine( $"bench/images: {target.Name}: building {target.Tag} from {target.Commit} ({WhyBuild( target, identity )})" );
+
+        var context = Path.Combine( repo, "bench", ".work", "src", $"{target.Name}-{target.Commit[..12]}" );
+        var build = await BuildArgumentsAsync( target, options, repo, context ).ConfigureAwait( false );
+        if ( build is null )
+        {
+            return false;
+        }
+
+        if ( options.DryRun )
+        {
+            Console.WriteLine( $"  docker {string.Join( ' ', build )}" );
+            return true;
+        }
+
+        var exit = await Commands.RunAsync( "docker", build, repo ).ConfigureAwait( false );
+        if ( exit != 0 )
+        {
+            Console.WriteLine( $"bench/images: {target.Name}: docker build FAILED (exit code {exit}); the context is kept in {context}" );
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Why a target is built: its tag is missing, --rebuild asked for it, or the tag holds another revision.</summary>
+    private static string WhyBuild( ImageTarget target, ImageIdentity? identity )
+    {
+        if ( identity is null )
+        {
+            return "missing";
+        }
+
+        if ( identity.Revision == target.Commit )
+        {
+            return "--rebuild";
+        }
+
+        return $"holds revision {identity.Revision}";
+    }
+
+    /// <summary>Prepares the build context from `git archive` and returns docker's arguments, or null on failure.</summary>
+    private static async Task<List<string>?> BuildArgumentsAsync( ImageTarget target, BuildOptions options, string repo, string context )
+    {
+        var sourceRepository = target.Kind switch
+        {
+            TargetKind.Reference => options.ReferenceRepository,
+            TargetKind.Rust => options.RustRepository,
+            _ => repo,
+        };
+
+        if ( !options.DryRun )
+        {
+            if ( Directory.Exists( context ) )
+            {
+                Directory.Delete( context, recursive: true );
+            }
+
+            Directory.CreateDirectory( context );
+            await ArchiveAsync( sourceRepository, target.Commit, context ).ConfigureAwait( false );
+        }
+
+        string dockerfile;
+        if ( target.Kind == TargetKind.Reference )
+        {
+            // parity/bin/reference refuses to build when the Rails Dockerfile is no longer the one its copy was made
+            // from; the same check, with the same pinned digest (read from that script so it has one holder).
+            dockerfile = Path.Combine( repo, "parity", "docker", "reference.Dockerfile" );
+            if ( !options.DryRun && !await ReferenceDockerfileMatchesAsync( repo, Path.Combine( context, "Dockerfile" ) ).ConfigureAwait( false ) )
+            {
+                return null;
+            }
+        }
+        else
+        {
+            // Both ports' images copy the Rails assets from reference/: the gitlink their commit pins.
+            var gitlink = await Commands.RequireAsync( "git", ["-C", sourceRepository, "rev-parse", $"{target.Commit}:reference"] ).ConfigureAwait( false );
+            if ( !options.DryRun )
+            {
+                var referenceTree = Path.Combine( context, "reference" );
+                Directory.CreateDirectory( referenceTree );
+                await ArchiveAsync( options.ReferenceRepository, gitlink, referenceTree ).ConfigureAwait( false );
+            }
+
+            dockerfile = Path.Combine( context, "Dockerfile" );
+        }
+
+        List<string> build =
+        [
+            "build", "-t", target.Tag, "-f", dockerfile,
+            "--build-arg", $"APP_VERSION={target.Version}",
+            "--build-arg", $"GIT_REVISION={target.Commit}",
+            "--label", $"{RevisionLabel}={target.Commit}",
+            "--label", $"{VersionLabel}={target.Version}",
+            "--label", $"{TargetLabel}={target.Name}",
+        ];
+        if ( target.Stage is not null )
+        {
+            build.AddRange( ["--target", target.Stage] );
+        }
+
+        if ( target.Kind == TargetKind.Rust )
+        {
+            // Both Rust commits share the Dockerfile's cargo target cache mount, and cargo decides what to rebuild by
+            // mtime. A cached `COPY crates` layer keeps the mtimes of whichever build made it, so cargo can link the
+            // other commit's crates (v0.1.1 failed on `campfire_storage::Staged` right after a 3fe9f61 build). Without
+            // layer caching every step runs, the sources carry this extraction's time (tar -m), and cargo rebuilds the
+            // workspace; registry crates stay cached.
+            build.Add( "--no-cache" );
+        }
+
+        var snapshot = Environment.GetEnvironmentVariable( "PARITY_DEBIAN_SNAPSHOT" );
+        if ( target.Kind == TargetKind.Reference && !string.IsNullOrEmpty( snapshot ) )
+        {
+            build.AddRange( ["--build-arg", $"DEBIAN_SNAPSHOT={snapshot}"] );
+        }
+
+        if ( options.Cpus is { } cpus )
+        {
+            var quota = ( cpus * 100_000 ).ToString( CultureInfo.InvariantCulture );
+            build.AddRange( ["--cpu-period", CpuPeriodMicroseconds, "--cpu-quota", quota] );
+        }
+
+        build.Add( context );
+
+        return build;
+    }
+
+    /// <summary>
+    /// Extracts <paramref name="commit"/> into <paramref name="destination"/>. Files get the current time, not the commit's
+    /// (tar -m), so cargo sees them as newer than anything in the shared target cache (see the Rust builds' --no-cache).
+    /// </summary>
+    private static async Task ArchiveAsync( string repository, string commit, string destination )
+    {
+        var tarball = destination.TrimEnd( '/' ) + ".tar";
+        await Commands.RequireAsync( "git", ["-C", repository, "archive", "--format=tar", "-o", tarball, commit] ).ConfigureAwait( false );
+        await Commands.RequireAsync( "tar", ["-xmf", tarball, "-C", destination] ).ConfigureAwait( false );
+        File.Delete( tarball );
+    }
+
+    private static async Task<bool> ReferenceDockerfileMatchesAsync( string repo, string dockerfile )
+    {
+        var script = await File.ReadAllLinesAsync( Path.Combine( repo, "parity", "bin", "reference" ) ).ConfigureAwait( false );
+        const string Assignment = "REFERENCE_DOCKERFILE_SHA256=";
+        var pinned = script
+            .Select( line => line.Trim( ) )
+            .FirstOrDefault( line => line.StartsWith( Assignment, StringComparison.Ordinal ) )?[Assignment.Length..];
+        var actual = Convert.ToHexStringLower( SHA256.HashData( await File.ReadAllBytesAsync( dockerfile ).ConfigureAwait( false ) ) );
+        if ( pinned != actual )
+        {
+            Console.WriteLine( $"bench/images: reference/Dockerfile is {actual}, but parity/docker/reference.Dockerfile was copied from {pinned}" );
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>The identity bench/run records: image ID, revision (label, else GIT_REVISION), version and creation time.</summary>
+    internal static async Task<ImageIdentity?> InspectAsync( string tag )
+    {
+        const string Format = "{{.Id}}\t"
+            + "{{index .Config.Labels \"" + RevisionLabel + "\"}}\t"
+            + "{{index .Config.Labels \"" + VersionLabel + "\"}}\t"
+            + "{{.Created}}\t"
+            + "{{range .Config.Env}}{{println .}}{{end}}";
+        var result = await Commands.CaptureAsync( "docker", ["image", "inspect", "-f", Format, tag] ).ConfigureAwait( false );
+        if ( !result.Succeeded )
+        {
+            return null;
+        }
+
+        var fields = result.Output.Split( '\t', 5 );
+        var environment = fields[4].Split( '\n', StringSplitOptions.RemoveEmptyEntries );
+        var revision = Blank( fields[1] ) ?? EnvironmentValue( environment, "GIT_REVISION" ) ?? "";
+        var version = Blank( fields[2] ) ?? EnvironmentValue( environment, "APP_VERSION" ) ?? "";
+
+        return new ImageIdentity( fields[0].Replace( "sha256:", "", StringComparison.Ordinal ), revision, version, fields[3] );
+    }
+
+    /// <summary>The value of <paramref name="name"/> in the image's NAME=value environment lines, if it is set.</summary>
+    private static string? EnvironmentValue( string[] environment, string name ) =>
+        environment.FirstOrDefault( line => line.StartsWith( name + "=", StringComparison.Ordinal ) )?[( name.Length + 1 )..];
+
+    private static string? Blank( string value ) => string.IsNullOrWhiteSpace( value ) || value == "<no value>" ? null : value.Trim( );
+}
+
+internal sealed record ImageIdentity( string Id, string Revision, string Version, string Created );
+
+internal sealed record BuildOptions(
+    IReadOnlyCollection<string> Only,
+    bool Rebuild,
+    bool DryRun,
+    int? Cpus,
+    string RustRepository,
+    string ReferenceRepository,
+    string DotnetRevision )
+{
+    public bool Selects( params string[] names ) => Only.Count == 0 || names.Any( Only.Contains );
+
+    public static BuildOptions? Parse( string[] args )
+    {
+        var repo = Repository.Root;
+        var only = new HashSet<string>( StringComparer.Ordinal );
+        var rebuild = false;
+        var dryRun = false;
+        int? cpus = null;
+        var rust = Environment.GetEnvironmentVariable( "RUST_REPO" ) ?? Path.GetFullPath( Path.Combine( repo, "..", "once-campfire-rust" ) );
+        var reference = Environment.GetEnvironmentVariable( "REFERENCE_REPO" ) ?? Path.Combine( repo, "reference" );
+        var dotnetRevision = "HEAD";
+        var reader = new ArgumentReader( args );
+        while ( reader.MoveNext( ) )
+        {
+            switch ( reader.Current )
+            {
+                case "--only" when reader.TryTakeValue( out var names ):
+                    only.UnionWith( names.Split( ',', StringSplitOptions.RemoveEmptyEntries ) );
+                    break;
+                case "--rebuild":
+                    rebuild = true;
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                case "--cpus" when reader.TryTakePositive( out int count ):
+                    cpus = count;
+                    break;
+                case "--rust-repo" when reader.TryTakeValue( out var path ):
+                    rust = Path.GetFullPath( path );
+                    break;
+                case "--reference-repo" when reader.TryTakeValue( out var path ):
+                    reference = Path.GetFullPath( path );
+                    break;
+                case "--dotnet-rev" when reader.TryTakeValue( out var revision ):
+                    dotnetRevision = revision;
+                    break;
+                default:
+                    Console.Error.WriteLine( $"bench/images: unknown option {reader.Current}" );
+                    return null;
+            }
+        }
+
+        return new BuildOptions( only, rebuild, dryRun, cpus, rust, reference, dotnetRevision );
+    }
+}

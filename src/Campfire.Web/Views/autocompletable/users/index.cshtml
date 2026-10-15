@@ -1,0 +1,2 @@
+@inherits ViewSlice<AutocompletableUsersPage>
+@await Each(Model.Users, user => Partial(Views.autocompletable.users._prompt_item.Create(new PromptItemPartial(ViewContext, user))))

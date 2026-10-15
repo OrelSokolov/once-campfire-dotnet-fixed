@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Campfire.Application/Campfire.Application.csproj" />
+    <Project Path="src/Campfire.Web/Campfire.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Campfire.Application.Tests/Campfire.Application.Tests.csproj" />
+    <Project Path="tests/Campfire.Web.Tests/Campfire.Web.Tests.csproj" />
+    <Project Path="tests/Campfire.IntegrationTests/Campfire.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# A `docker` command for machines that only have rootless Podman. Put this directory first on
+# PATH and the imported harness (parity/bin/*, reference-tools/*, bench/*) runs unchanged:
+#
+#   PATH="$PWD/eng/docker-shim:$PATH" parity/bin/reference build
+#
+# Everything is passed to `podman` as is, except where rootless Podman needs a translation:
+#
+#   run/create with --user (-u)  gain --userns=keep-id, so the container uid is the host uid.
+#                          Without it, `--user $(id -u):$(id -g)` is a subordinate uid on the
+#                          host, which can neither write the host-owned bind mounts (seed
+#                          copies, parity/out) nor leave files the host user can delete.
+#   run/create without --network host  gain --sysctl net.ipv4.ip_unprivileged_port_start=0, as
+#                          Docker sets by default: the images' Thruster binds :80 as uid 1000.
+#   run/create without --pids-limit  gain --pids-limit=-1: Docker has no default limit, Podman
+#                          allows 2048 tasks, and the Playwright capture container needs more.
+#   run/create --cpuset-cpus CPUS  when the user's cgroup does not delegate the cpuset
+#                          controller (the systemd default), Podman fails the run. The option is
+#                          dropped, and a detached container's processes are pinned with
+#                          taskset once it has started (runc resets an inherited affinity): the
+#                          same CPUs, without a cgroup limit. Foreground runs get a warning.
+#   update --cpuset-cpus CPUS CONTAINER...  the same, applied to every thread of every process
+#                          in the container's cgroup, from inside Podman's user namespace.
+#
+# DOCKER_SHIM_DEBUG=1 prints the translated command on stderr.
+# DOCKER_SHIM_PODMAN overrides the podman binary (default: podman on PATH).
+set -euo pipefail
+
+PODMAN=${DOCKER_SHIM_PODMAN:-podman}
+
+debug() { if [ -n "${DOCKER_SHIM_DEBUG:-}" ]; then echo "docker-shim: $*" >&2; fi; }
+
+rootless() { [ "$(id -u)" != 0 ]; }
+
+# Whether rootless containers can get a cpuset limit: the controller must be delegated to the
+# user's systemd instance (and so to the libpod scopes below it).
+cpuset_delegated() {
+  local uid controllers
+  uid=$(id -u)
+  controllers=/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/cgroup.subtree_control
+  rootless || return 0
+  [ -r "$controllers" ] && grep -qw cpuset "$controllers"
+}
+
+# run/create: rewrite the options before the image name. Options that take a value are listed so
+# the image name is found correctly; everything after the image is the container's command.
+translate_run() {
+  local sub=$1; shift
+  local out=() cpuset="" has_user="" has_userns="" image_seen="" detach="" network="" port_sysctl="" pids_limit=""
+  while [ $# -gt 0 ]; do
+    if [ -n "$image_seen" ]; then out+=("$1"); shift; continue; fi
+    case "$1" in
+      --network|--net) network=$2; out+=("$1" "$2"); shift 2; continue ;;
+      --network=*|--net=*) network=${1#*=} ;;
+      --sysctl) case "$2" in net.ipv4.ip_unprivileged_port_start=*) port_sysctl=1 ;; esac
+                out+=("$1" "$2"); shift 2; continue ;;
+      --pids-limit) pids_limit=1; out+=("$1" "$2"); shift 2; continue ;;
+      --pids-limit=*) pids_limit=1 ;;
+      -d|--detach|--detach=true) detach=1 ;;
+      -[a-zA-Z]*d*) case "$1" in -*[!dit]*) ;; *) detach=1 ;; esac ;; # -dit, -itd, ...
+      --cpuset-cpus) cpuset=$2; shift 2; continue ;;
+      --cpuset-cpus=*) cpuset=${1#*=}; shift; continue ;;
+      -u|--user) has_user=1; out+=("$1" "$2"); shift 2; continue ;;
+      -u?*|--user=*) has_user=1 ;;
+      --userns) has_userns=1; out+=("$1" "$2"); shift 2; continue ;;
+      --userns=*) has_userns=1 ;;
+      --) out+=("$1"); shift; image_seen=1; continue ;;
+      # Options with a separate value (docker run's, as the harness uses them, and the common rest).
+      -e|--env|--env-file|-v|--volume|-p|--publish|--name|--label|-l|--cpus|\
+      --memory|-m|--entrypoint|-w|--workdir|--tmpfs|--mount|--ipc|--pid|--add-host|--dns|\
+      --hostname|-h|--cap-add|--cap-drop|--security-opt|--ulimit|--shm-size|--platform|\
+      --restart|--log-driver|--log-opt|--stop-signal|--stop-timeout|--device|--group-add|\
+      --cidfile|--label-file|--pull|--memory-swap|--cpu-shares|-c|--cgroupns|--uts|--expose|\
+      --health-cmd|--health-interval|--init-path)
+        out+=("$1" "$2"); shift 2; continue ;;
+      -*) ;;
+      *) image_seen=1 ;;
+    esac
+    out+=("$1"); shift
+  done
+
+  local pre=()
+  if rootless && [ -n "$has_user" ] && [ -z "$has_userns" ]; then pre+=(--userns=keep-id); fi
+  # Docker lets any uid bind ports below 1024 in a container's own network namespace; Podman
+  # does not, and Thruster (uid 1000) binds :80.
+  if [ "$network" != host ] && [ -z "$port_sysctl" ]; then pre+=(--sysctl net.ipv4.ip_unprivileged_port_start=0); fi
+  # Docker sets no pids limit; Podman's default is 2048 tasks, which the capture container's 16
+  # browser workers exceed (thread creation fails and Firefox contexts die mid-run).
+  if [ -z "$pids_limit" ]; then pre+=(--pids-limit=-1); fi
+  local cmd=("$PODMAN" "$sub" "${pre[@]+"${pre[@]}"}")
+  if [ -n "$cpuset" ] && cpuset_delegated; then cmd+=(--cpuset-cpus "$cpuset"); cpuset=""; fi
+  cmd+=("${out[@]+"${out[@]}"}")
+  debug "${cmd[*]}"
+  if [ -z "$cpuset" ]; then exec "${cmd[@]}"; fi
+
+  # runc resets the affinity it inherits, so `taskset podman run` is not enough: pin the started
+  # container's processes. A detached run is pinned before it returns (twice, to catch processes
+  # forked while the first pass ran); later children inherit the affinity.
+  if [ "$sub" = run ] && [ -n "$detach" ]; then
+    local id; id=$("${cmd[@]}")
+    pin_container "$id" "$cpuset"; pin_container "$id" "$cpuset"
+    echo "$id"
+    return
+  fi
+  echo "docker-shim: warning: --cpuset-cpus $cpuset is only applied to detached runs here (no cpuset controller)" >&2
+  exec "${cmd[@]}"
+}
+
+# Pin every thread of every process in a container's cgroup to CPUS, from inside Podman's user
+# namespace, so processes running as other container uids are ours to change.
+pin_container() {
+  local cgroup pid
+  cgroup=$("$PODMAN" inspect -f '{{.State.CgroupPath}}' "$1")
+  [ -n "$cgroup" ] || { echo "docker-shim: no cgroup for $1" >&2; exit 1; }
+  while read -r pid; do
+    "$PODMAN" unshare taskset -a -p -c "$2" "$pid" >/dev/null 2>&1 || true # it may have exited
+  done < "/sys/fs/cgroup$cgroup/cgroup.procs"
+}
+
+# update --cpuset-cpus CPUS CONTAINER...: pin every thread in each container's cgroup.
+translate_update() {
+  local cpuset="" rest=() containers=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --cpuset-cpus) cpuset=$2; shift 2 ;;
+      --cpuset-cpus=*) cpuset=${1#*=}; shift ;;
+      -*) rest+=("$1" "$2"); shift 2 ;;
+      *) containers+=("$1"); shift ;;
+    esac
+  done
+  if [ -z "$cpuset" ] || cpuset_delegated; then
+    exec "$PODMAN" update ${cpuset:+--cpuset-cpus "$cpuset"} "${rest[@]+"${rest[@]}"}" "${containers[@]}"
+  fi
+  if [ ${#rest[@]} -gt 0 ]; then "$PODMAN" update "${rest[@]}" "${containers[@]}"; fi
+  local c
+  for c in "${containers[@]}"; do
+    pin_container "$c" "$cpuset"
+    echo "$c"
+  done
+}
+
+sub=${1:-}
+case "$sub" in
+  run|create) shift; translate_run "$sub" "$@" ;;
+  container)
+    case "${2:-}" in
+      run|create) sub=$2; shift 2; translate_run "$sub" "$@" ;;
+      update) shift 2; translate_update "$@" ;;
+      *) exec "$PODMAN" "$@" ;;
+    esac ;;
+  update) shift; translate_update "$@" ;;
+  *) exec "$PODMAN" "$@" ;;
+esac

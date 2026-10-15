@@ -1,0 +1,42 @@
+@inherits ViewSlice<MessagePartial>
+@* Be sure to check/update messages/_template.cshtml when changing this file *@
+
+@* The fragment cache key (Caching.FragmentKeys.Message) names the presentation version; bump it when the presentation filters change what they emit. *@
+@{ var message = Model.Message; }
+@if (message.Unrenderable)
+{
+    @Raw("  ")
+    @await Partial(Views.messages._unrenderable.Create(new UnrenderablePartial(ViewContext)))
+}
+else
+{
+@:  @MessagesHelper.MessageTagOpen(message)
+    <h2 class="message__day-separator">@LocalDatetimeTag(message.CreatedAt, "date")</h2>
+@:
+    <figure class="avatar message__avatar">
+      @AvatarTag(ViewContext, message.Creator)
+    </figure>
+@:
+    <turbo-frame id="@DomIds.MessageEditFrame(message.ClientMessageId)">
+      <div class="message__body">
+        <div class="message__body-content">
+          <div class="message__meta">
+            <h3 class="message__heading">
+              <span class="message__author" title="@message.Creator.Title">
+                <strong data-reply-target="author">@message.Creator.Name</strong>
+              </span>
+              @LinkTo(message.AtPath, Attributes().Target("_top").Class("message__permalink"), LocalDatetimeTag(message.CreatedAt, "time", Attributes()
+                  .Class("message__timestamp")))
+              <span class="message__room">
+                @LinkToText(message.RoomName, message.AtPath, Attributes().Target("_top").Data("reply_target", "link"))
+              </span>
+            </h3>
+            @await Partial(Views.messages._actions.Create(new MessageActionsPartial(ViewContext, message, ViewContext.Url(message.AtPath))))
+          </div>
+          @await Partial(Views.messages._presentation.Create(new PresentationPartial(ViewContext, message)))
+          @await Partial(Views.messages.boosts._boosts.Create(new BoostsPartial(ViewContext, message)))
+        </div>
+      </div>
+    </turbo-frame>
+    @Raw("</div>")
+}

@@ -1,0 +1,53 @@
+@inherits PageSlice<MessagesEditPage>
+@{ var message = Model.Message; }
+<turbo-frame id="@DomIds.MessageEditFrame(message.ClientMessageId)">
+  <div class="message__body position-relative" data-controller="scroll-into-view">
+    <div class="message__body-content message__body-content--editing gap">
+      @if (message.Attachment is { } attachment)
+      {
+@:        @MessagesHelper.AttachmentPresentation(ViewContext, attachment)
+@:
+@:        <div class="message__edit-btns flex align-center justify-space-between gap full-width pad-block-start-half">
+@:          @ButtonTagOpen(Attributes().Class("btn btn--negative center margin-block-end").Type("submit").Attribute("form", message.DomId("delete_form")).Data("turbo_confirm", "Are you sure you want to delete this message?"))
+@:            @ImageTag(ViewContext, "trash.svg", Attributes().AriaHidden())
+            <span class="for-screen-reader">Delete message</span>
+@:</button>        </div>
+      }
+      else
+      {
+          const string formActions = "lexxy:file-accept->form#preventAttachment keydown.esc->form#cancel " +
+              "keydown.ctrl+enter->form#submit:prevent keydown.meta+enter->form#submit:prevent";
+          var form = FormWith(ViewContext, message.Path).Model(ParamNames.Messages.Key).Method("patch").Id(message.DomId("form"))
+              .Data("controller", "form").Data("action", formActions);
+@:        <div class="composer--edit composer--rich-text">
+@:          @form.Open()
+@:            <div class="full-width input input--actor min-width fill-white">
+@:              @RichTextAreaOpen(ViewContext, ParamNames.Messages.Key, ParamNames.Messages.Body, message.DomId(), Attributes().Rows(1).Class("input lexxy-content").Aria("multiline", "true").Aria("label", "Edit message").Autofocus().Attribute("permitted-attachment-types", "application/vnd.campfire.mention application/vnd.actiontext.opengraph-embed").Data("action", RichTextDataActions), Model.EditableBody)
+@:                @MentionPromptTag(message.RoomId)
+@:</lexxy-editor>            </div>
+@:
+@:            @LinkToText("Close editor and discard changes", message.Path, Attributes().Data("form_target", "cancel").Hidden())
+@:
+@:            <div class="message__edit-btns flex align-center justify-space-between gap full-width pad-block-start-half">
+@:              @ButtonTagOpen(Attributes().Type("submit").Class("btn btn--reversed"))
+@:                @ImageTag(ViewContext, "check.svg", Attributes().AriaHidden())
+                <span class="for-screen-reader">Save changes</span>
+@:</button>
+@:              @ButtonTagOpen(Attributes().Class("btn btn--negative").Type("submit").Attribute("form", message.DomId("delete_form")).Data("turbo_confirm", "Are you sure you want to delete this message?"))
+@:                @ImageTag(ViewContext, "trash.svg", Attributes().AriaHidden())
+                <span class="for-screen-reader">Delete message</span>
+@:</button>            </div>
+@:</form>        </div>
+      }
+    </div>
+
+    <div class="message__actions flex flex-wrap">
+      @LinkToOpen(message.Path, Attributes().Class("message__action-btn message__edit-close-btn txt-small btn btn--borderless"))
+        @ImageTag(ViewContext, "remove.svg", Attributes().Class("colorize--black").AriaHidden())
+        <span class="for-screen-reader">Close editor and discard changes</span>
+</a>    </div>
+
+    @(FormWith(ViewContext, message.Path).Method("delete").Id(message.DomId("delete_form"))
+        .Data("turbo_frame", DomIds.MessageEditFrame(message.ClientMessageId)).Open())
+  </div>
+</turbo-frame>

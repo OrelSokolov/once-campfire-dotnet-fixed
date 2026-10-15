@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Repository paths and JSON vector reads, shared by every test project. -->
+    <Compile Include="..\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Using Include="Campfire.Tests.Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Campfire.Web\Campfire.Web.csproj" />
+  </ItemGroup>
+
+</Project>

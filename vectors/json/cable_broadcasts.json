@@ -1,0 +1,44 @@
+[
+  {
+    "broadcasting": "Z2lkOi8vY2FtcGZpcmUvUm9vbXM6OkNsb3NlZC82OTk0NDgzMzA:messages",
+    "pubsub_payload": "\"\\u003cturbo-stream action=\\\"append\\\" target=\\\"messages_rooms_closed_699448330\\\"\\u003e\\u003ctemplate\\u003e\\n  \\u003cdiv class=\\\"message message--formatted message--failed center\\\"\\u003e\\n  \\u003cdiv class=\\\"message__body\\\"\\u003e\\n    \\u003cdiv class=\\\"message__body-content txt-align-center\\\"\\u003e\\n      Failed to load message content\\n    \\u003c/div\\u003e\\n  \\u003c/div\\u003e\\n\\u003c/div\\u003e\\n\\u003c/template\\u003e\\u003c/turbo-stream\\u003e\"",
+    "subscriber_identifier": "{\"channel\":\"Turbo::StreamsChannel\",\"signed_stream_name\":\"IloybGtPaTh2WTJGdGNHWnBjbVV2VW05dmJYTTZPa05zYjNObFpDODJPVGswTkRnek16QTptZXNzYWdlcyI=--f2703ccf15370f07adba1d380258fb4696e5bd838a66156cf1108efcc120e132\"}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"Turbo::StreamsChannel\\\",\\\"signed_stream_name\\\":\\\"IloybGtPaTh2WTJGdGNHWnBjbVV2VW05dmJYTTZPa05zYjNObFpDODJPVGswTkRnek16QTptZXNzYWdlcyI=--f2703ccf15370f07adba1d380258fb4696e5bd838a66156cf1108efcc120e132\\\"}\",\"message\":\"\\u003cturbo-stream action=\\\"append\\\" target=\\\"messages_rooms_closed_699448330\\\"\\u003e\\u003ctemplate\\u003e\\n  \\u003cdiv class=\\\"message message--formatted message--failed center\\\"\\u003e\\n  \\u003cdiv class=\\\"message__body\\\"\\u003e\\n    \\u003cdiv class=\\\"message__body-content txt-align-center\\\"\\u003e\\n      Failed to load message content\\n    \\u003c/div\\u003e\\n  \\u003c/div\\u003e\\n\\u003c/div\\u003e\\n\\u003c/template\\u003e\\u003c/turbo-stream\\u003e\"}"
+  },
+  {
+    "broadcasting": "user_127326141_unreads",
+    "pubsub_payload": "{\"roomId\":699448330}",
+    "subscriber_identifier": "{\"channel\":\"UnreadRoomsChannel\"}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"UnreadRoomsChannel\\\"}\",\"message\":{\"roomId\":699448330}}"
+  },
+  {
+    "broadcasting": "user_712064548_unreads",
+    "pubsub_payload": "{\"roomId\":699448330}",
+    "subscriber_identifier": "{\"channel\":\"UnreadRoomsChannel\"}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"UnreadRoomsChannel\\\"}\",\"message\":{\"roomId\":699448330}}"
+  },
+  {
+    "broadcasting": "user_773523959_unreads",
+    "pubsub_payload": "{\"roomId\":699448330}",
+    "subscriber_identifier": "{\"channel\":\"UnreadRoomsChannel\"}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"UnreadRoomsChannel\\\"}\",\"message\":{\"roomId\":699448330}}"
+  },
+  {
+    "broadcasting": "user_773523960_unreads",
+    "pubsub_payload": "{\"roomId\":699448330}",
+    "subscriber_identifier": "{\"channel\":\"UnreadRoomsChannel\"}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"UnreadRoomsChannel\\\"}\",\"message\":{\"roomId\":699448330}}"
+  },
+  {
+    "broadcasting": "typing_notifications:Z2lkOi8vY2FtcGZpcmUvUm9vbXM6OkNsb3NlZC82OTk0NDgzMzA",
+    "pubsub_payload": "{\"action\":\"start\",\"user\":{\"id\":773523959,\"name\":\"\\u003cb\\u003eZoë\\u003c/b\\u003e \\u0026 \\\"Ünïcødé\\\" 'quotes'  line para 😀 tabnewline bs\\\\ slash/ \\u003c/script\\u003e\"}}",
+    "subscriber_identifier": "{\"channel\":\"TypingNotificationsChannel\",\"room_id\":699448330}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"TypingNotificationsChannel\\\",\\\"room_id\\\":699448330}\",\"message\":{\"action\":\"start\",\"user\":{\"id\":773523959,\"name\":\"\\u003cb\\u003eZoë\\u003c/b\\u003e \\u0026 \\\"Ünïcødé\\\" 'quotes'  line para 😀 tabnewline bs\\\\ slash/ \\u003c/script\\u003e\"}}}"
+  },
+  {
+    "broadcasting": "user_127326141_reads",
+    "pubsub_payload": "{\"room_id\":699448330}",
+    "subscriber_identifier": "{\"channel\":\"ReadRoomsChannel\"}",
+    "frame": "{\"identifier\":\"{\\\"channel\\\":\\\"ReadRoomsChannel\\\"}\",\"message\":{\"room_id\":699448330}}"
+  }
+]

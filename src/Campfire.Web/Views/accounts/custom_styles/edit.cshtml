@@ -1,0 +1,44 @@
+@inherits PageSlice<CustomStylesEditPage>
+@{ var form = FormWith(ViewContext, ViewContext.Url(Routes.AccountCustomStyles)).Model(ParamNames.Accounts.Key).Method("patch").Class("flex flex-column gap")
+    .Data("controller", "form").Data("action", "keydown.ctrl+enter->form#submit keydown.meta+enter->form#submit"); }
+
+
+<section class="panel panel--wide txt-align-center flex flex-column position-relative" style="view-transition-name: custom-styles">
+  @form.Open()
+    <div class="panel__button">
+      @TranslationButton(ViewContext, "custom_styles")
+    </div>
+
+    <div class="pad-inline-double margin-inline">
+      <h1 class="margin-none">Custom CSS</h1>
+      <p class="flex flex-wrap align-center justify-center gap margin-none-block-start" style="--column-gap: 0.5ch; --row-gap: 0">
+        <span>Add custom CSS styles.</span>
+        @ImageTag(ViewContext, "alert.svg", Attributes().Class("flex-inline colorize--black").Size(16).AriaHidden())
+        <span>Use Caution: you could break things.</span>
+      </p>
+    </div>
+
+    <label class="flex align-start gap flex-item-grow">
+      @form.TextArea(ParamNames.Accounts.CustomStyles, Model.CustomStyles, Attributes().Class("input input--code txt--small").Placeholder("Add CSS styles…")
+          .Autocomplete("off").Attribute("spellcheck", "false").Attribute("autocorrect", "off").Attribute("autocapitalize", "off").Rows(16).Required(false))
+    </label>
+
+    @form.ButtonOpen(Attributes().Class("btn btn--reversed center txt-large").Type("submit"))
+      @ImageTag(ViewContext, "check.svg", Attributes().AriaHidden().Size(20))
+      <span class="for-screen-reader">Save changes</span>
+</button></form></section>
+@functions {
+    protected override string? PageTitle => "Custom styles";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackTo(ViewContext, Routes.EditAccount)
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

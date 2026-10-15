@@ -1,0 +1,38 @@
+@inherits ViewSlice<BellPartial>
+@{ var room = Model.Room; }
+<span>
+  <span class="button_to_change_notifying"
+      data-controller="notifications" data-notifications-subscriptions-url-value="@Routes.UserPushSubscriptions" data-notifications-attention-class="btn--pulsing">
+    @TurboFrameForInvolvementTagOpen(room.Id, room.Kind)
+      <button class="btn" data-action="click->notifications#attemptToSubscribe" data-notifications-target="bell">
+        @ImageTag(ViewContext, "notification-bell-loading.svg", Attributes().Size(20).AriaHidden())
+        @ImageTag(ViewContext, "notification-bell-alert.svg", Attributes().Size(20).AriaHidden().Hidden())
+        <span class="for-screen-reader">Notification settings for this @(room.Kind.IsDirect() ? "Ping" : "room")</span>
+      </button>
+</turbo-frame>
+    <dialog data-notifications-target="notAllowedNotice" class="dialog pad center center-block border-radius border shadow" style="--inline-space: var(--block-space)">
+      <div class="flex flex-column txt-align-center">
+        <span class="btn btn--faux center txt-x-large">
+          @ImageTag(ViewContext, "notification-bell-alert.svg", Attributes().Size(48).AriaHidden())
+          <span class="for-screen-reader">Notifications alert</span>
+        </span>
+
+        <section>
+          <h1 class="txt-large margin-none">Notifications aren’t allowed</h1>
+          <div class="txt-align-start margin-block-start">
+            @await Partial(Views.pwa._browser_settings.Create(new ContextPartial(ViewContext)))
+            @await Partial(Views.pwa._system_settings.Create(new ContextPartial(ViewContext)))
+            @await Partial(Views.pwa._install_instructions.Create(new ContextPartial(ViewContext)))
+          </div>
+        </section>
+
+        <form method="dialog" class="flex align-center gap center">
+          <button class="btn dialog__close" autofocus="true">
+            <span class="for-screen-reader">Close</span>
+            @ImageTag(ViewContext, "remove.svg", Attributes().Size(20).AriaHidden())
+          </button>
+        </form>
+      </div>
+    </dialog>
+  </span>
+</span>

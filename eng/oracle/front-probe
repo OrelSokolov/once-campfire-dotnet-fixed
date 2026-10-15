@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# What Thruster adds to, or passes through from, the app behind it.
+#
+#   eng/oracle/front-probe CONTAINER [PATH...]
+#
+# CONTAINER is a running candidate or reference container (parity/bin/candidate up names them
+# campfire-candidate-<port>). For each PATH (default: /up and /no-such-page) it prints the raw
+# response headers twice: through Thruster on the container's port 80, and straight from the app
+# on TARGET_PORT (3000), both requested from inside the container with bash's /dev/tcp. Headers
+# only in the first set are Thruster's; headers in both are the app's, passed through (compare
+# their values, Date in particular).
+set -euo pipefail
+
+container=${1:?usage: front-probe CONTAINER [PATH...]}
+shift
+paths=("$@")
+[ ${#paths[@]} -gt 0 ] || paths=(/up /no-such-page)
+
+for path in "${paths[@]}"; do
+  for port in 80 3000; do
+    echo "== GET $path on :$port ($([ "$port" = 80 ] && echo Thruster || echo app))"
+    docker exec -i "$container" bash -c '
+      exec 3<>/dev/tcp/127.0.0.1/'"$port"'
+      printf "GET %s HTTP/1.1\r\nHost: campfire.test\r\nUser-Agent: front-probe\r\nAccept: text/html\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n" "'"$path"'" >&3
+      sed -n "1,/^\r\$/p" <&3 | tr -d "\r"
+    '
+  done
+done

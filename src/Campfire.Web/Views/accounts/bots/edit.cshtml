@@ -1,0 +1,42 @@
+@inherits PageSlice<BotsEditPage>
+@{
+    var form = FormWith(ViewContext, Routes.AccountBot(Model.BotId)).Model(ParamNames.Users.Key).Method("patch").Class("flex flex-column gap").Multipart();
+    var delete = ButtonTo(ViewContext, Routes.AccountBot(Model.BotId), Attributes().Method("delete").Class("btn txt--small btn--negative")
+        .Aria("label", "Delete this chat bot")
+        .Data("turbo_confirm", "Are you sure you want to permanently remove this bot from the account? This can’t be undone."));
+    var rekey = ButtonTo(ViewContext, Routes.AccountBotKey(Model.BotId), Attributes().Method("put").Class("btn full-width txt--small btn--negative")
+        .Aria("label", "Generate a new key").Data("turbo_confirm", "Are you sure you want to change the bot key? All usage of this bot must be updated."));
+}
+
+
+<section class="panel" style="view-transition-name: chat-bot-@Model.BotId">
+  @form.Open()
+    @await Partial(Views.accounts.bots._form.Create(new BotFormPartial(ViewContext, form, Model.Bot)))
+</form>
+  <hr class="separator full-width margin-block-double">
+
+  <div class="flex align-center gap justify-space-between">
+    @delete.Open
+      @ImageTag(ViewContext, "trash.svg", Attributes().AriaHidden().Size(20))
+      @ImageTag(ViewContext, "bot.svg", Attributes().AriaHidden().Size(20))
+@delete.Close
+    @rekey.Open
+      @ImageTag(ViewContext, "refresh.svg", Attributes().AriaHidden().Size(20))
+      @ImageTag(ViewContext, "key.svg", Attributes().AriaHidden().Size(20))
+@rekey.Close  </div>
+</section>
+@functions {
+    protected override string? PageTitle => "Edit bot";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackTo(ViewContext, Routes.AccountBots)
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

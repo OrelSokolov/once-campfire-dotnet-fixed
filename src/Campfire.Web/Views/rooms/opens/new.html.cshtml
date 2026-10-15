@@ -1,0 +1,8 @@
+@inherits ViewSlice<OpenRoomFormPage>
+@implements IUsesLayout<Views.rooms.layouts._new, RoomPageLayout>
+@* rooms/opens/new.html.erb: a proxy named `new` doesn't compile, so the file keeps its format suffix. *@
+
+  @await Partial(Views.rooms.opens._form.Create(new OpenRoomFormPartial(ViewContext, Model, Routes.NewRoomsClosed)))
+@functions {
+    public RoomPageLayout LayoutModel => new( ViewContext, Model.Room, Model.CanAdminister );
+}

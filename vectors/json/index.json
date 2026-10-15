@@ -1,0 +1,305 @@
+{
+  "generator": "reference-tools/json/generate.rb",
+  "rails": "8.2.0.alpha",
+  "clock": "2026-03-02T16:00:00Z",
+  "host": "campfire.test",
+  "hostile": "<b>Zoë</b> & \"Ünïcødé\" 'quotes'  line para 😀 tab\tnewline\n bs\\ slash/ </script>",
+  "records": {
+    "account": 873240054,
+    "room": 699448330,
+    "zoe": 773523959,
+    "bot": 773523960,
+    "messages": [
+      933434676,
+      933434677,
+      933434678
+    ],
+    "image_message": 933434679,
+    "bot_message": 933434680
+  },
+  "vectors": [
+    {
+      "name": "by_bots_index",
+      "file": "by_bots_index.json",
+      "bytes": 24051,
+      "sha256": "b7aeb05df83d8fda45d0563fa43189de3e8d34c3cbd475f0ccf469ec7ce9e226",
+      "source": "messages/by_bots/index.json.jbuilder",
+      "request": {
+        "method": "GET",
+        "path": "/rooms/699448330/773523960-JsonVectorBot1/messages",
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"b7aeb05df83d8fda45d0563fa43189de\"",
+        "link": "<http://campfire.test/rooms/699448330/773523960-JsonVectorBot1/messages?before=933434640>; rel=\"next\"",
+        "x-total-count": "42"
+      }
+    },
+    {
+      "name": "by_bots_index_before",
+      "file": "by_bots_index_before.json",
+      "bytes": 22332,
+      "sha256": "3f5a8b3d5710dc9693aa9be2a6664cc85d1cc3a8b0685214bab9011f0ed714ef",
+      "source": "messages/by_bots/index.json.jbuilder (paged, Link header)",
+      "request": {
+        "method": "GET",
+        "path": "/rooms/699448330/773523960-JsonVectorBot1/messages",
+        "params": {
+          "before": 933434678
+        },
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"3f5a8b3d5710dc9693aa9be2a6664cc8\"",
+        "x-total-count": "42"
+      }
+    },
+    {
+      "name": "by_bots_update",
+      "file": "by_bots_update.json",
+      "bytes": 753,
+      "sha256": "a7e317900eac633989f3f5aadd34ee762be37d7ab9cf1397f362b950ad40df89",
+      "source": "messages/by_bots/show.json.jbuilder",
+      "request": {
+        "method": "PUT",
+        "path": "/rooms/699448330/773523960-JsonVectorBot1/messages/933434680",
+        "body": "Edited by the bot: <b>Zoë</b> & \"Ünïcødé\" 'quotes'  line para 😀 tab\tnewline\n bs\\ slash/ </script>",
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"a7e317900eac633989f3f5aadd34ee76\""
+      }
+    },
+    {
+      "name": "boosts_by_bots_create",
+      "file": "boosts_by_bots_create.json",
+      "bytes": 470,
+      "sha256": "af7f8b4f64c36a7c75d8373543a34abf3d655eaae0a8daaf59588c1cba2dde97",
+      "source": "messages/boosts/by_bots/show.json.jbuilder",
+      "request": {
+        "method": "POST",
+        "path": "/rooms/699448330/773523960-JsonVectorBot1/messages/933434676/boosts",
+        "body": "👍 & <ok> \" \"",
+        "headers": {}
+      },
+      "status": 201,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"af7f8b4f64c36a7c75d8373543a34abf\""
+      }
+    },
+    {
+      "name": "autocompletable_users",
+      "file": "autocompletable_users.json",
+      "bytes": 3788,
+      "sha256": "e899a3967df4878c402555f7c0f62f5dd2be54a85e7ec7ded312aed47535a128",
+      "source": "autocompletable/users/index.json.jbuilder",
+      "request": {
+        "method": "GET",
+        "path": "/autocompletable/users.json",
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"e899a3967df4878c402555f7c0f62f5d\"",
+        "x-total-count": "9"
+      }
+    },
+    {
+      "name": "autocompletable_users_query",
+      "file": "autocompletable_users_query.json",
+      "bytes": 574,
+      "sha256": "fd57a2c521578c5a96f9544812c5f167c9ac6a3b4b73d986770d34aac7a13e7c",
+      "source": "autocompletable/users/index.json.jbuilder (filtered)",
+      "request": {
+        "method": "GET",
+        "path": "/autocompletable/users.json",
+        "params": {
+          "query": "Zo"
+        },
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"fd57a2c521578c5a96f9544812c5f167\"",
+        "x-total-count": "1"
+      }
+    },
+    {
+      "name": "autocompletable_users_room",
+      "file": "autocompletable_users_room.json",
+      "bytes": 1806,
+      "sha256": "0f236016a2e00491d1c0bfc7f2176491c21f735ac8c46ebf959304897e03e9ea",
+      "source": "autocompletable/users/index.json.jbuilder (room members)",
+      "request": {
+        "method": "GET",
+        "path": "/autocompletable/users.json",
+        "params": {
+          "room_id": 699448330
+        },
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"0f236016a2e00491d1c0bfc7f2176491\"",
+        "x-total-count": "4"
+      }
+    },
+    {
+      "name": "unfurl_link",
+      "file": "unfurl_link.json",
+      "bytes": 318,
+      "sha256": "be87f607298886620f1366ae465bf4643d01d348ab1b9df621a202623bfcc5c8",
+      "source": "UnfurlLinksController#create render json: (fetch stubbed)",
+      "request": {
+        "method": "POST",
+        "path": "/unfurl_link",
+        "params": {
+          "url": "https://unfurl.example/page"
+        },
+        "headers": {}
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"be87f607298886620f1366ae465bf464\"",
+        "vary": "Accept"
+      }
+    },
+    {
+      "name": "webmanifest",
+      "file": "webmanifest.json",
+      "bytes": 1926,
+      "sha256": "7c8e573e45d0dc30c194cba229f2d7c2202edb4c318a581a1c76ea5f5e6920cc",
+      "source": "pwa/manifest.json.erb",
+      "request": {
+        "method": "GET",
+        "path": "/webmanifest",
+        "headers": {
+          "Accept": "*/*"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "max-age=0, private, must-revalidate",
+        "etag": "W/\"7c8e573e45d0dc30c194cba229f2d7c2\"",
+        "vary": "Accept"
+      }
+    },
+    {
+      "name": "column_accounts_settings",
+      "file": "column_accounts_settings.json",
+      "bytes": 301,
+      "sha256": "bfc8cff0cd2b299d2f457687225a98213fde5a29640e46143ddecf7c657c382b",
+      "source": "accounts.settings raw column text (has_json): as seeded, after settings.restrict_room_creation_to_administrators = true, after update!(settings: { ...: \"0\" }), and as Account.create! writes it untouched"
+    },
+    {
+      "name": "column_blob_metadata_image_jpeg",
+      "file": "column_blob_metadata_image_jpeg.json",
+      "bytes": 60,
+      "sha256": "0b0aebcb8e5d8e002fc28b3286633f4c5e173170321f498a047c3b474287f8b4",
+      "source": "active_storage_blobs.metadata (ActiveRecord::Coders::JSON) of blob 1",
+      "filename": "moon.jpg"
+    },
+    {
+      "name": "column_blob_metadata_image_webp",
+      "file": "column_blob_metadata_image_webp.json",
+      "bytes": 19,
+      "sha256": "bc61584b5e0c2da4b25dd8f5bf5c90f3c93b159af8819cdd6477fb646655684e",
+      "source": "active_storage_blobs.metadata (ActiveRecord::Coders::JSON) of blob 2",
+      "filename": "moon.webp"
+    },
+    {
+      "name": "column_blob_metadata_video_quicktime",
+      "file": "column_blob_metadata_video_quicktime.json",
+      "bytes": 138,
+      "sha256": "16388281252c4676030ade01c5edb1358b70de1edc635714ff37d96510d20cb9",
+      "source": "active_storage_blobs.metadata (ActiveRecord::Coders::JSON) of blob 9",
+      "filename": "alpha-centuri.mov"
+    },
+    {
+      "name": "column_blob_metadata_text_plain",
+      "file": "column_blob_metadata_text_plain.json",
+      "bytes": 35,
+      "sha256": "7845b50d66b20f55c3e18d9c878cc597e1aac9f1e04194c04f57d9e3abdf5a8f",
+      "source": "active_storage_blobs.metadata (ActiveRecord::Coders::JSON) of blob 13",
+      "filename": "launch-notes.txt"
+    },
+    {
+      "name": "column_blob_metadata_image_bmp",
+      "file": "column_blob_metadata_image_bmp.json",
+      "bytes": 35,
+      "sha256": "7845b50d66b20f55c3e18d9c878cc597e1aac9f1e04194c04f57d9e3abdf5a8f",
+      "source": "active_storage_blobs.metadata (ActiveRecord::Coders::JSON) of blob 14",
+      "filename": "pixel.bmp"
+    },
+    {
+      "name": "column_blob_metadata_new_image",
+      "file": "column_blob_metadata_new_image.json",
+      "bytes": 60,
+      "sha256": "0b0aebcb8e5d8e002fc28b3286633f4c5e173170321f498a047c3b474287f8b4",
+      "source": "active_storage_blobs.metadata after create_with_attachment! and analyze (moon.jpg)"
+    },
+    {
+      "name": "webhook_payload",
+      "file": "webhook_payload.json",
+      "bytes": 1550,
+      "sha256": "7a353dde7994981027ee87da2e1e1a1ab2c4fa0c5b5d73b7c5ada790e53c2413",
+      "source": "Webhook#payload (Hash#to_json)",
+      "message_id": 933434678
+    },
+    {
+      "name": "web_push_payload",
+      "file": "web_push_payload.json",
+      "bytes": 317,
+      "sha256": "eb577847c960d6e26d265bb09dee08d6aa5b136cd1878a3c41b0c4c90ab317dd",
+      "source": "WebPush::Notification#encoded_message (JSON.generate, not ActiveSupport)",
+      "message_id": 933434677
+    },
+    {
+      "name": "cable_broadcasts",
+      "file": "cable_broadcasts.json",
+      "bytes": 3844,
+      "sha256": "278c8e644d8cb9cd08681f1b043884f8ab2014d7a700629ebd587ec3f6bb6113",
+      "source": "ActionCable.server.broadcast payloads (recorded at the pubsub adapter) and the subscriber frames they become"
+    },
+    {
+      "name": "activesupport_encode",
+      "file": "activesupport_encode.json",
+      "bytes": 1458,
+      "sha256": "06ced9b8c95ff7342fbcf967e6fe13beb37c123bc6a766f22395506c49a059d9",
+      "source": "ActiveSupport::JSON.encode(value) for each key; values are the Ruby inputs described in the README",
+      "flags": {
+        "escape_html_entities_in_json": true,
+        "escape_js_separators_in_json": false,
+        "time_precision": 3,
+        "use_standard_json_time_format": true
+      }
+    },
+    {
+      "name": "to_json_vs_json_generate",
+      "file": "to_json_vs_json_generate.json",
+      "bytes": 752,
+      "sha256": "c3ae9f89f9190de1728c6ad8d8197b3514ad663e0ba142b6872d469827fee749",
+      "source": "Object#to_json (ActiveSupport) against JSON.generate/JSON.dump (the json gem), on HOSTILE"
+    }
+  ]
+}

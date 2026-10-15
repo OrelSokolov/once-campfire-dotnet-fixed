@@ -1,0 +1,61 @@
+@inherits ViewSlice<MessageActionsPartial>
+@* Be sure to check/update messages/_template.cshtml when changing this file *@
+@{ var message = Model.Message; }
+
+<div class="message__actions" data-controller="soft-keyboard">
+  @OpenTag("details", Attributes().Class("position-relative").Data("controller", "popup")
+      .Data("action", "keydown.esc->popup#close toggle->popup#toggle click@document->popup#closeOnClickOutside")
+      .Data("popup_orientation_top_class", "popup-orientation-top"))
+    <summary class="btn message__action-btn message__options-btn">
+      @ImageTag(ViewContext, "menu-dots-horizontal.svg", Attributes().Size(20).Class("colorize--black").AriaHidden())
+      <span class="for-screen-reader">Message options</span>
+    </summary>
+
+    <div class="message__actions-menu border shadow" data-popup-target="menu">
+      <div class="quick-boosts">
+        @foreach (var (character, title) in EmojiHelper.Reactions)
+        {
+            var form = FormWith(ViewContext, message.BoostsPath).Model(ParamNames.Boosts.Key)
+                .Data("turbo_frame", DomIds.MessageBoostingFrame(message.ClientMessageId)).Data("action", "popup#close");
+@:          @form.Open()
+@:            @HiddenFieldTag(ParamNames.Boosts.ContentField, character)
+@:            @form.ButtonOpen(Attributes().Type("submit").Title(title).Class("btn message__action-btn").Data("emoji", character))
+              <figure class="margin-none boost-character">@character</figure>
+              <span class="for-screen-reader">@title</span>
+            @Raw("</button></form>")
+        }
+
+        @LinkToOpen(message.NewBoostPath, Attributes().Class("btn message__action-btn message__boost-btn")
+            .Data("turbo_frame", DomIds.MessageNewBoostFrame(message.ClientMessageId)).Data("action", "soft-keyboard#open popup#close"))
+          @ImageTag(ViewContext, "boost.svg", Attributes().Class("colorize--black").Size(20).AriaHidden())
+          <span class="for-screen-reader">New boost</span>
+</a>      </div>
+
+      <div class="flex flex-wrap border-top margin-block-start-half pad-block-start-half message__actions-grid">
+        @if (message.Attachment is { } attachment)
+        {
+@:          @LinkToOpen(attachment.DownloadPath, Attributes().Class("btn message__action-btn center full-width hide-in-ios-pwa").Title("Download").Aria("label", "Download"))
+@:            @ImageTag(ViewContext, "download.svg", Attributes().Class("colorize--black").Size(20).AriaHidden())
+@:</a>
+@:          @OpenTag("button", Attributes().Class("btn message__action-btn center full-width").Data("controller", "web-share").Data("action", "web-share#share").Data("web_share_files_value", attachment.BlobPath).Data("web_share_title_value", attachment.Filename).Title("Share").Aria("label", "Share"))
+@:            @ImageTag(ViewContext, "share.svg", Attributes().Class("colorize--black").Size(20).AriaHidden())
+            @Raw("</button>")
+        }
+        else
+        {
+@:          @OpenTag("button", Attributes().Class("btn message__action-btn center full-width").Data("action", "reply#reply").Title("Reply").Aria("label", "Reply"))
+@:            @ImageTag(ViewContext, "reply.svg", Attributes().Class("colorize--black").Size(20).AriaHidden())
+            @Raw("</button>")
+        }
+
+        @OpenTag("button", Attributes().Class("btn message__action-btn center full-width").Title("Copy link").Aria("label", "Copy link")
+            .Data("controller", "copy-to-clipboard").Data("action", "copy-to-clipboard#copy").Data("copy_to_clipboard_success_class", "btn--success")
+            .Data("copy_to_clipboard_content_value", Model.Url))
+          @ImageTag(ViewContext, "link.svg", Attributes().Class("colorize--black").Size(20).AriaHidden())
+</button>
+        @LinkToOpen(message.EditPath, Attributes().Class("btn message__action-btn center full-width message__edit-btn")
+            .Data("turbo_frame", DomIds.MessageEditFrame(message.ClientMessageId)).Title("Edit").Aria("label", "Edit"))
+          @ImageTag(ViewContext, "pencil.svg", Attributes().Class("colorize--black").Size(20).AriaHidden())
+</a>      </div>
+    </div>
+</details></div>

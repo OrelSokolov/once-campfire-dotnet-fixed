@@ -1,0 +1,107 @@
+@inherits PageSlice<SearchesPage>
+@* The blank lines stand for the content_for blocks' lines, whose newlines ERB leaves behind. *@
+
+
+
+<div id="message-area" class="message-area">
+  <div class="message-area--empty min-width center">
+    <figure class="center pad">
+      @ImageTag(ViewContext, "search.svg", Attributes().AriaHidden().Class("colorize--black translucent"))
+    </figure>
+  </div>
+
+  @SearchResultsTagOpen()
+    @await Each(Model.Messages, RenderMessage)
+</div></div>
+
+@functions {
+    protected override string? PageTitle => "Search";
+
+    protected override string? BodyClass => "sidebar searches";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        switch ( sectionName )
+        {
+            case ContentFor.Nav:
+                Nav( );
+                break;
+            case ContentFor.Sidebar:
+  <div class="rooms position-relative flex flex-column gap overflow-y overflow-hide-scrollbar">
+    @{ Recents( ); }
+  </div>
+                break;
+            case ContentFor.Footer:
+                Footer( );
+                break;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void Nav( )
+    {
+        if ( Model.Query is { } query )
+        {
+    <div class="searches__query flex align-center gap pad-block-start-half">
+      @OpenTag("div", Attributes().Class("btn btn--reversed btn--faux align-center gap txt-nowrap"))
+        <span class="overflow-ellipsis">“@query”</span>
+        <span class="flex-item-no-shrink">@Model.Messages.Count</span>
+@Raw("</div>")    </div>
+        }
+@:
+  <div class="searches__recents align-center gap pad-block-half overflow-y overflow-hide-scrollbar">
+    @{ Recents( ); }
+  </div>
+    }
+
+    /// <summary>The recent-searches links, repeated in the nav and the sidebar.</summary>
+    private void Recents( )
+    {
+        foreach ( var search in Model.RecentSearches )
+        {
+@:      @LinkToOpen(Routes.SearchesFor(search), Attributes().Class("align-center gap room btn txt-nowrap"))
+        <span class="overflow-ellipsis">“@search”</span>
+            @Raw("</a>")
+        }
+@:
+        if ( Model.RecentSearches.Count > 0 )
+        {
+            var button = ButtonTo( ViewContext, ViewContext.Url( Routes.ClearSearches ), Attributes( ).Method( "delete" ).Class( "btn searches__btn" )
+                .Data( "turbo_confirm", "Are you sure you want to clear your recent searches?" ) );
+@:      @button.Open
+@:        @ImageTag(ViewContext, "broom.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Clear recent searches</span>
+            @button.Close
+        }
+    }
+
+    private void Footer( )
+    {
+        var form = FormWith( ViewContext, Routes.Searches ).Class( "margin-block flex-item-grow contain flex align-center gap" ).Data( "controller", "form" )
+            .Data( "action", "keydown.esc->form#cancel" );
+  <div class="composer flex align-end gap">
+    @LinkToOpen(Routes.Room(Model.ReturnToRoomId), Attributes().Class("btn flex-item-no-shrink margin-block-end")
+        .Style("view-transition-name: input-switcher; --btn-border-radius: 0.5em"))
+      @ImageTag(ViewContext, "arrow-left.svg", Attributes().AriaHidden())
+      <span class="for-screen-reader">Exit search </span>
+@Raw("</a>")
+    @form.Open()
+      <div class="composer__input flex align-center flex-item-grow gap full-width input input--actor min-width">
+        @ImageTag(ViewContext, "search.svg", Attributes().Size(20).AriaHidden().Class("composer__input-hint colorize--black")
+            .Style("view-transition-name: input-btn;"))
+
+        @form.TextField(ParamNames.Searches.Query, null, Attributes().Value(Model.SubmittedQuery).Class("searches__input input flex-item-grow")
+            .Role("searchbox").Aria("label", "search").Autofocus().Required())
+
+        @LinkToOpen(Routes.Searches, Attributes().Data("form_target", "cancel").Role("button").Class("searches__reset"))
+          @ImageTag(ViewContext, "remove.svg", Attributes().AriaHidden().Size(14).Class("colorize--black"))
+          <span class="for-screen-reader">Clear search field</span>
+@Raw("</a>")
+        @form.ButtonOpen(Attributes().Type("submit").Class("btn btn--reversed flex-item-no-shrink txt-small").Style("--btn-border-radius: 0.5em"))
+          @ImageTag(ViewContext, "arrow-up.svg", Attributes().AriaHidden())
+          <span class="for-screen-reader">Search</span>
+@Raw("</button>")      </div>
+@Raw("</form>")  </div>
+    }
+}

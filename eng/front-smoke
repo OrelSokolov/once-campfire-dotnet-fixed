@@ -1,0 +1,158 @@
+#!/usr/bin/env dotnet
+// Native AOT proof for the production front: real TLS and HTTP/2 using a synthetic autocert PEM.
+// Run after eng/aot; certificate issuance/renewal use the local CA in AutomaticCertificateTests.
+#:property RestorePackagesWithLockFile=false
+#:include lib/Repository.cs
+#:include lib/Commands.cs
+
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+const string domain = "chat.example.test";
+var repo = Repository.Root;
+var runtimeIdentifier = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "linux-arm64" : "linux-x64";
+var binary = Path.Combine( repo, "artifacts", "aot", runtimeIdentifier, "campfire", "campfire" );
+if ( !File.Exists( binary ) )
+{
+    Console.Error.WriteLine( "eng/front-smoke: run eng/aot first" );
+    return 2;
+}
+
+var storage = Path.Combine( Path.GetTempPath( ), "campfire-native-front-" + Guid.NewGuid( ).ToString( "N" ) );
+var certificates = Path.Combine( storage, "certificates" );
+Directory.CreateDirectory( certificates );
+using var key = ECDsa.Create( ECCurve.NamedCurves.nistP256 );
+var csr = new CertificateRequest( "CN=" + domain, key, HashAlgorithmName.SHA256 );
+var names = new SubjectAlternativeNameBuilder( );
+names.AddDnsName( domain );
+csr.CertificateExtensions.Add( names.Build( ) );
+using var certificate = csr.CreateSelfSigned( DateTimeOffset.UtcNow.AddHours( -1 ), DateTimeOffset.UtcNow.AddDays( 90 ) );
+var pem = key.ExportECPrivateKeyPem( ) + "\n" + certificate.ExportCertificatePem( );
+await File.WriteAllTextAsync( Path.Combine( certificates, domain ), pem );
+var ports = new HashSet<int>( );
+while ( ports.Count < 3 )
+{
+    using var listener = new TcpListener( IPAddress.Loopback, 0 );
+    listener.Start( );
+    ports.Add( (( IPEndPoint ) listener.LocalEndpoint).Port );
+}
+
+var selected = ports.ToArray( );
+var (httpPort, httpsPort, targetPort) = (selected[0], selected[1], selected[2]);
+var environment = new Dictionary<string, string>( StringComparer.Ordinal )
+{
+    ["CAMPFIRE_FRONT_SERVER"] = "1",
+    ["HTTP_PORT"] = httpPort.ToString( CultureInfo.InvariantCulture ),
+    ["HTTPS_PORT"] = httpsPort.ToString( CultureInfo.InvariantCulture ),
+    ["TARGET_PORT"] = targetPort.ToString( CultureInfo.InvariantCulture ),
+    ["TLS_DOMAIN"] = domain,
+    ["STORAGE_PATH"] = certificates,
+    ["CAMPFIRE_STORAGE_PATH"] = storage,
+    ["SECRET_KEY_BASE_DUMMY"] = "1",
+    ["DISABLE_SSL"] = "1",
+    ["RAILS_LOG_LEVEL"] = "warn",
+};
+var start = Commands.StartInfo( binary, [], repo, environment );
+start.RedirectStandardOutput = true;
+start.RedirectStandardError = true;
+// A THRUSTER_-prefixed variable wins over its plain name (as in Thruster), so none may leak in from the caller.
+foreach ( var variable in start.Environment.Keys.Where( name => name.StartsWith( "THRUSTER_", StringComparison.Ordinal ) ).ToArray( ) )
+{
+    start.Environment.Remove( variable );
+}
+
+using var process = Process.Start( start )!;
+var stdout = process.StandardOutput.ReadToEndAsync( );
+var stderr = process.StandardError.ReadToEndAsync( );
+try
+{
+    using var timeout = new CancellationTokenSource( TimeSpan.FromSeconds( 45 ) );
+    var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false };
+    handler.ConnectCallback = async ( _, cancellationToken ) =>
+    {
+        var socket = new Socket( SocketType.Stream, ProtocolType.Tcp );
+        try
+        {
+            await socket.ConnectAsync( IPAddress.Loopback, httpsPort, cancellationToken );
+            return new NetworkStream( socket, ownsSocket: true );
+        }
+        catch
+        {
+            socket.Dispose( );
+            throw;
+        }
+    };
+    handler.SslOptions.RemoteCertificateValidationCallback = ( _, presented, _, errors ) =>
+        presented?.GetCertHashString( ) == certificate.Thumbprint && (errors & SslPolicyErrors.RemoteCertificateNameMismatch) == 0;
+    using var client = new HttpClient( handler );
+    while ( true )
+    {
+        if ( process.HasExited )
+        {
+            throw new InvalidOperationException( "Native app exited during startup: " + await stderr );
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage( HttpMethod.Get, "https://" + domain + "/up" )
+            {
+                Version = HttpVersion.Version20,
+                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            };
+            using var response = await client.SendAsync( request, timeout.Token );
+            if ( response.StatusCode != HttpStatusCode.OK || response.Version != HttpVersion.Version20 || response.Headers.Server.Count != 0 )
+            {
+                throw new InvalidDataException( "Native TLS/HTTP2 response failed validation." );
+            }
+
+            break;
+        }
+        catch ( HttpRequestException ) when ( !timeout.IsCancellationRequested )
+        {
+            // Readiness retry only: the listener is not available until application initialization completes.
+            await Task.Delay( TimeSpan.FromMilliseconds( 100 ), timeout.Token );
+        }
+    }
+
+    using var plain = new HttpClient( new HttpClientHandler { AllowAutoRedirect = false } );
+    using var redirectRequest = new HttpRequestMessage( HttpMethod.Get, $"http://127.0.0.1:{httpPort}/up" );
+    redirectRequest.Headers.Host = domain;
+    using var redirect = await plain.SendAsync( redirectRequest, timeout.Token );
+    using var rejected = await plain.GetAsync( $"http://127.0.0.1:{httpPort}/up", timeout.Token );
+    if ( redirect.StatusCode != HttpStatusCode.MovedPermanently
+        || redirect.Headers.Location?.AbsoluteUri != "https://" + domain + "/up"
+        || rejected.StatusCode != HttpStatusCode.MisdirectedRequest
+        || await File.ReadAllTextAsync( Path.Combine( certificates, domain ), timeout.Token ) != pem )
+    {
+        throw new InvalidDataException( "Native redirect, host policy or certificate persistence failed validation." );
+    }
+
+    Console.WriteLine( "eng/front-smoke: native TLS, HTTP/2, redirect, host policy and existing PEM passed" );
+    return 0;
+}
+finally
+{
+    if ( !process.HasExited )
+    {
+        await Commands.RunAsync( "kill", ["-TERM", process.Id.ToString( CultureInfo.InvariantCulture )] );
+        using var stopped = new CancellationTokenSource( TimeSpan.FromSeconds( 30 ) );
+        try
+        {
+            await process.WaitForExitAsync( stopped.Token );
+        }
+        catch ( OperationCanceledException ) when ( stopped.IsCancellationRequested )
+        {
+            process.Kill( entireProcessTree: true );
+            await process.WaitForExitAsync( );
+        }
+    }
+
+    await Task.WhenAll( stdout, stderr );
+    Directory.Delete( storage, recursive: true );
+}

@@ -1,0 +1,57 @@
+# The .NET app image (Dockerfile) builds from the solution files, src/, bin/boot and bin/start-app,
+# the Rails post-restore hook, and the pinned Rails app's browser assets and public/ files (the asset
+# pipeline digests them at boot) with the vendored gem assets. Everything else stays out.
+
+/.git
+/.github
+/.claude
+/.vs
+/.idea
+/artifacts
+/TestResults
+/storage
+/tmp
+/target
+
+/tests
+/parity
+/plans
+/docs
+/bench
+/vectors
+/vendor/*
+!/vendor/assets
+/reference-tools
+/eng/*
+!/eng/style.editorconfig
+/.editorconfig
+/*.md
+
+**/bin/Debug
+**/bin/Release
+**/obj
+**/node_modules
+
+# reference/: the ONCE post-restore hook, and what the asset pipeline and the static file server read.
+/reference/*
+!/reference/MIT-LICENSE
+!/reference/hooks
+/reference/hooks/*
+!/reference/hooks/post-restore
+!/reference/app
+/reference/app/*
+!/reference/app/assets
+!/reference/app/javascript
+!/reference/vendor
+/reference/vendor/*
+!/reference/vendor/javascript
+!/reference/config
+/reference/config/*
+!/reference/config/importmap.rb
+!/reference/config/initializers
+/reference/config/initializers/*
+!/reference/config/initializers/assets.rb
+!/reference/public
+
+/Dockerfile
+/.dockerignore

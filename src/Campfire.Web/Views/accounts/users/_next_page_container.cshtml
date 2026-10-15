@@ -1,0 +1,4 @@
+@inherits ViewSlice<NextPageContainerPartial>
+@TurboFrameTagOpen(DomIds.NextPageContainer, Attributes().Loading("lazy").Class("flex center"), Routes.AccountUsersPage(Model.Page))
+  <div class="spinner center"></div>
+@{ WriteLiteral("</turbo-frame>"); }

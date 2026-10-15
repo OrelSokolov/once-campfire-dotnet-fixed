@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""Summarize a bench/run results dir: median [min-max] across reps, Rails vs Rust.
+
+  bench/report bench/results/<stamp>
+
+"Rust adv." is the Rust advantage: >1 means Rust is better (higher throughput, or lower
+latency/memory/time), computed from the medians. When the results include `rust-identity` runs
+(the Rust image serving `Accept-Encoding: identity`), the HTTP table adds a "Rust, no gzip" column
+and its advantage over Rust with gzip.
+
+PATCH (the .NET port's benchmark, docs/benchmarks.md): every target and variant bench/run knows
+(TARGET[-listener][-identity][-index][-counters]) gets its own column. Apps are grouped by topology and
+encoding (the front server or the app's own listener; gzip or identity), and each column's advantage
+("adv.") is over Rails in the same group. The report opens with every target's identity (identity.json),
+the .NET runtime settings and GC threads observed, every run's errors and mismatches (HTTP validation,
+cable delivery verification, uploads), and the load generator's CPU use (a saturated load generator makes
+a result a lower bound).
+"""
+import collections, glob, json, os, statistics, sys
+
+out = sys.argv[1]
+runs = {}
+for f in sorted(glob.glob(os.path.join(out, "*-*.json"))):
+    r = json.load(open(f))
+    if "app" in r:
+        runs.setdefault(r["app"], []).append(r)
+
+MODS = ("identity", "listener", "index", "counters")
+TARGETS = ["reference", "rust", "rust-v0.1.1", "dotnet", "dotnet-aot", "dotnet-jit"]
+NAMES = {"reference": "Rails", "rust": "Rust", "rust-v0.1.1": "Rust v0.1.1 (diverged)", "dotnet": ".NET",
+         "dotnet-aot": ".NET AOT", "dotnet-jit": ".NET JIT"}
+GROUPS = [
+    ((False, False), "Through the container's front server (Thruster; Rust's own), gzip"),
+    ((False, True), "Through the container's front server, `Accept-Encoding: identity`"),
+    ((True, False), "The app's own listener on TARGET_PORT (Puma, Kestrel, Rust's app listener), gzip"),
+    ((True, True), "The app's own listener, `Accept-Encoding: identity`"),
+]
+LOADGEN_SATURATED = 0.85
+
+
+def split(app):
+    mods = set()
+    while True:
+        head, _, tail = app.rpartition("-")
+        if head and tail in MODS:
+            mods.add(tail)
+            app = head
+        else:
+            return app, mods
+
+
+def name(app):
+    base, mods = split(app)
+    extra = "".join(f" +{m}" for m in ("index", "counters") if m in mods)
+    return NAMES.get(base, base) + extra
+
+
+def order(app):
+    base, mods = split(app)
+    return (TARGETS.index(base) if base in TARGETS else len(TARGETS), "index" in mods, "counters" in mods, app)
+
+
+def cell(vals):
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None, "–"
+    m = statistics.median(vals)
+    fmt = (lambda v: f"{v:,.0f}") if m >= 100 else (lambda v: f"{v:.1f}") if m >= 10 else (lambda v: f"{v:.2f}")
+    spread = f" [{fmt(min(vals))}–{fmt(max(vals))}]" if len(vals) > 1 else ""
+    return m, fmt(m) + spread
+
+
+def values(app, getter):
+    vals = []
+    for r in runs[app]:
+        try:
+            vals.append(getter(r))
+        except (KeyError, IndexError, TypeError, StopIteration, ZeroDivisionError):
+            vals.append(None)
+    return vals
+
+
+class Table:
+    """One group's columns: its apps, and each non-Rails app's advantage over the group's Rails."""
+
+    def __init__(self, apps):
+        self.apps = apps
+        self.reference = next((a for a in apps if split(a)[0] == "reference"), None)
+        self.ports = [a for a in apps if a != self.reference] if self.reference else []
+
+    def header(self, title, note=""):
+        print(f"\n#### {title}\n")
+        if note:
+            print(note + "\n")
+        advantages = "".join(f" {name(p)} adv. |" for p in self.ports)
+        print("| Metric | " + " | ".join(name(a) for a in self.apps) + " |" + advantages)
+        print("|---|" + "---|" * (len(self.apps) + len(self.ports)))
+
+    def row(self, title, getter, higher_better):
+        meds, cells = {}, []
+        for a in self.apps:
+            m, c = cell(values(a, getter))
+            meds[a] = m
+            cells.append(c)
+        ratios = []
+        for p in self.ports:
+            ratio = "–"
+            if meds.get(self.reference) and meds.get(p):
+                x = meds[p] / meds[self.reference] if higher_better else meds[self.reference] / meds[p]
+                ratio = f"{x:.1f}×"
+            ratios.append(ratio)
+        print(f"| {title} | " + " | ".join(cells) + " |" + "".join(f" {x} |" for x in ratios))
+
+
+def http(route, conc, key):
+    def get(r):
+        h = next(h for h in r["http"] if h["route"] == route and h["conc"] == conc)
+        if h["latency"].get("n", 0) == 0 or h["ok"] == 0:
+            return None
+        return h["rps"] if key == "rps" else h["latency"][key]
+    return get
+
+
+def procmem(n, phase, what):
+    def get(r):
+        c = next(c for c in r["cable"] if c["clients"] == n)
+        p = c["process_memory"][phase]
+        roles = p["roles"]
+        base = split(r["app"])[0]
+        port = base != "reference"  # PATCH: the ports' app is `campfire` (Rust; .NET AOT; `dotnet campfire.dll`)
+        if what == "app":
+            return roles["campfire" if port else "puma"]["peak_pss_mb"]
+        if what == "app_anon":
+            return roles["campfire" if port else "puma"]["peak_anon_mb"]
+        if what == "serving":  # everything that takes part in a cable delivery
+            keys = ["campfire"] if base.startswith("rust") else ["campfire", "thrust"] if base.startswith("dotnet") else ["puma", "redis", "thrust"]
+            return sum(roles[k]["peak_pss_mb"] for k in keys if k in roles)
+        if what == "per_client_kb":  # the container's Pss with every client subscribed, over its Pss before they connected
+            return (p["peak_total_pss_mb"] - c["process_memory"]["baseline_total_pss_mb"]) * 1024 / n
+        return p["peak_total_pss_mb"]
+    return get
+
+
+def ordered_unique(items):
+    seen, result = set(), []
+    for i in items:
+        if i not in seen:
+            seen.add(i)
+            result.append(i)
+    return result
+
+
+# ---- Header: environment, identities, .NET runtime, correctness, load generator ----
+
+env = os.path.join(out, "env.txt")
+if os.path.exists(env):
+    print("```\n" + open(env).read().strip() + "\n```")
+all_apps = sorted(runs, key=order)
+print("\nReps: " + ", ".join(f"{a} {len(runs[a])}" for a in all_apps) + ". Cells: median [min–max].")
+
+identity_path = os.path.join(out, "identity.json")
+identity = json.load(open(identity_path)) if os.path.exists(identity_path) else {}
+if identity:
+    print("\n### Targets\n")
+    print("| Target | Image | Image ID | Revision | Version | Created | Unpacked | Notes |")
+    print("|---|---|---|---|---|---|---|---|")
+    for base in sorted(identity, key=lambda b: TARGETS.index(b) if b in TARGETS else 99):
+        i = identity[base]
+        revision = i.get("revision") or f"unknown ({i.get('revision_source')})"
+        size = f"{i['size_bytes'] / 1e6:,.0f} MB" if i.get("size_bytes") else "–"
+        digest = ", digest " + ", ".join(i["digests"]) if i.get("digests") else ""
+        print(f"| {NAMES.get(base, base)} | `{i['image']}` | `{(i.get('id') or '')[:19]}`{digest} | `{revision}` | {i.get('version') or '–'} "
+              f"| {(i.get('created') or '')[:19]} | {size} | {i.get('note', '')} |")
+
+dotnet_apps = [a for a in all_apps if split(a)[0].startswith("dotnet")]
+if dotnet_apps:
+    print("\n### .NET runtime\n")
+    print("Build and configuration from the image (identity.json); threads and DOTNET_ variables as the kernel saw the app "
+          "process at idle and after the suites. One `.NET Server GC` thread runs per server-GC heap (none under "
+          "workstation GC); with DATAS the runtime adapts how many heaps it uses up to that count.\n")
+    print("| App | Build | GC mode (observed) | `System.GC.Server` | Server GC threads, idle → end | Background GC threads | Tiered compilation | Tiered PGO | DOTNET_ (process) | App RLIMIT_NOFILE | Counters |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    for a in dotnet_apps:
+        d = identity.get(split(a)[0], {}).get("dotnet", {})
+        idle = [((r.get("processes") or {}).get("idle") or {}).get("app") or {} for r in runs[a]]
+        end = [((r.get("processes") or {}).get("end") or {}).get("app") or {} for r in runs[a]]
+        gc = ", ".join(f"{i.get('server_gc_threads', '?')} → {e.get('server_gc_threads', '?')}" for i, e in zip(idle, end))
+        bgc = ", ".join(str(e.get("background_gc_threads", "?")) for e in end)
+        denv = idle[0].get("dotnet_env") if idle and idle[0] else {}
+        procs = ((runs[a][0].get("processes") or {}).get("idle") or {}).get("processes") or []
+        nofile = next((p["nofile"] for p in procs if p["role"] == "campfire"), "?")
+        tiered = d.get("tiered_compilation") if d.get("build", "").startswith("JIT") else "n/a (Native AOT)"
+        pgo = d.get("tiered_pgo") if d.get("build", "").startswith("JIT") else "n/a (Native AOT)"
+        counters = runs[a][0].get("counters")
+        counters_text = "off" if not counters else f"on: `{counters.get('config')}`; " + ", ".join(
+            f"{f} {s / 1e6:.1f} MB" for f, s in (counters.get("files") or {}).items()) if counters else "off"
+        heaps = [e.get("server_gc_threads") for e in end if e]
+        mode = "?" if not heaps else f"server, {max(heaps)} heaps at most" if max(heaps) > 0 else "workstation"
+        config = d.get("server_gc") if d.get("build", "").startswith("JIT") else "compiled in (Native AOT)"
+        print(f"| {name(a)} | {d.get('build', '?')} | {mode} | {config} | {gc} | {bgc} | {tiered} | {pgo} "
+              f"| {' '.join(f'`{k}={v}`' for k, v in sorted((denv or {}).items())) or '–'} | {nofile} | {counters_text} |")
+    if any(split(a)[1] & {"counters"} for a in dotnet_apps):
+        print("\nCounters overhead: compare each `+counters` column with the same target without it in the tables below.")
+
+print("\n### Correctness (every run)\n")
+print("HTTP: every response's status, Content-Type and Content-Encoding checked, bodies searched for the route's expected "
+      "rows (bench/run `route_request`). Cable: each message posted must reach each subscribed client exactly once, on a "
+      "Turbo stream of the page. Uploads: 2xx with an `<img>`, then the thumbnail 200 `image/*`.\n")
+print("| App | Rep | HTTP responses | Transport errors | ≥ 400 | Mismatches (kinds) | Bodies checked | Cable deliveries expected | Missing | Duplicates | Off-stream | Unexpected | Failed posts | Clients unconfirmed / failed / disconnected | Upload failures |")
+print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+totals = collections.Counter()
+samples = []
+for a in all_apps:
+    for r in sorted(runs[a], key=lambda r: r["rep"]):
+        responses = errors = bad = mismatches = bodies = 0
+        kinds = collections.Counter()
+        validated = True
+        for h in r["http"]:
+            responses += sum(h["statuses"].values())
+            errors += h["errors"]
+            bad += sum(v for k, v in h["statuses"].items() if int(k) >= 400)
+            v = h.get("validation")
+            if v is None:
+                validated = False
+                continue
+            mismatches += v["mismatches"]
+            bodies += v["bodies_checked"]
+            kinds.update(v["kinds"])
+            samples += [f"{a} rep {r['rep']} {h['route']} c={h['conc']}: {s}" for s in v["samples"][:2]]
+            samples += [f"{a} rep {r['rep']} {h['route']} c={h['conc']}: transport error: {s}" for s in (v.get("error_samples") or [])[:2]]
+        c = collections.Counter()
+        for cable in r["cable"]:
+            v = cable.get("verification") or {}
+            for k in ("expected_deliveries", "missing", "duplicates", "off_stream", "unexpected", "post_failures", "unconfirmed", "disconnected"):
+                c[k] += v.get(k, 0)
+            c["failed"] += cable.get("failed", 0)
+            samples += [f"{a} rep {r['rep']} cable {cable['clients']}: {s}" for s in (v.get("samples") or [])[:2]]
+        upload_failures = (r.get("upload") or {}).get("failures", 0)
+        totals.update({"errors": errors, "bad": bad, "mismatches": mismatches, "missing": c["missing"], "duplicates": c["duplicates"],
+                       "off_stream": c["off_stream"], "unexpected": c["unexpected"], "post_failures": c["post_failures"],
+                       "clients": c["unconfirmed"] + c["failed"] + c["disconnected"], "upload_failures": upload_failures})
+        kind_text = ", ".join(f"{k} {v}" for k, v in sorted(kinds.items()))
+        print(f"| {name(a)}{' ' + ', '.join(sorted(split(a)[1] - {'index', 'counters'})) if split(a)[1] - {'index', 'counters'} else ''} | {r['rep']} "
+              f"| {responses:,} | {errors} | {bad} | {mismatches if validated else 'not validated'}{f' ({kind_text})' if kind_text else ''} | {bodies:,} "
+              f"| {c['expected_deliveries']:,} | {c['missing']} | {c['duplicates']} | {c['off_stream']} | {c['unexpected']} | {c['post_failures']} "
+              f"| {c['unconfirmed']} / {c['failed']} / {c['disconnected']} | {upload_failures} |")
+problems = {k: v for k, v in totals.items() if v}
+print("\n" + ("**All runs: no errors, mismatches, missing deliveries or failures.**" if not problems else
+              "**Problems:** " + ", ".join(f"{k.replace('_', ' ')} {v:,}" for k, v in problems.items()) + "."))
+if samples:
+    print("\nFirst samples:\n")
+    for s in samples[:12]:
+        print(f"- {s}")
+
+print("\n### Load generator\n")
+print(f"CPU use of the load generator over the CPUs it may use (1.0 = all of LOADGEN_CPUS busy). Above {LOADGEN_SATURATED} the "
+      "load generator may be the bottleneck and the result a lower bound.\n")
+print("| App | HTTP, max over runs | Cable saturated phase, max | Runs above the threshold |")
+print("|---|---|---|---|")
+for a in all_apps:
+    hu = [h.get("loadgen", {}).get("util") for r in runs[a] for h in r["http"]]
+    cu = [c["throughput"].get("loadgen_util") for r in runs[a] for c in r["cable"]]
+    hot = [f"{h['route']} c={h['conc']}" for r in runs[a] for h in r["http"] if (h.get("loadgen", {}).get("util") or 0) > LOADGEN_SATURATED]
+    hot += [f"cable {c['clients']}" for r in runs[a] for c in r["cable"] if (c["throughput"].get("loadgen_util") or 0) > LOADGEN_SATURATED]
+    fmt = lambda xs: f"{max(x for x in xs if x is not None):.2f}" if any(x is not None for x in xs) else "–"
+    print(f"| {a} | {fmt(hu)} | {fmt(cu)} | {', '.join(ordered_unique(hot)) or 'none'} |")
+
+# ---- The measurements, one section per topology and encoding ----
+
+for (listener, identity_mode), title in GROUPS:
+    apps = [a for a in all_apps if ("listener" in split(a)[1]) == listener and ("identity" in split(a)[1]) == identity_mode]
+    if not apps:
+        continue
+    t = Table(apps)
+    print(f"\n### {title}")
+
+    t.header("Startup and memory")
+    t.row("cold start: docker run → /up 200 (ms)", lambda r: r["cold_start_ms"], False)
+    t.row("idle memory.current (MB)", lambda r: r["memory"]["idle_current_mb"], False)
+    t.row("idle anon (MB)", lambda r: r["memory"]["idle_anon_mb"], False)
+    t.row("peak memory.current under load (MB)", lambda r: r["memory"]["peak_current_mb"], False)
+    t.row("peak anon under load (MB)", lambda r: r["memory"]["peak_anon_mb"], False)
+
+    routes = ordered_unique((h["route"], h["conc"]) for a in apps for r in runs[a] for h in r["http"])
+    if routes:
+        t.header("HTTP (signed in as david; keep-alive; c = concurrent connections)")
+        for route, conc in routes:
+            t.row(f"{route} c={conc} req/s", http(route, conc, "rps"), True)
+            t.row(f"{route} c={conc} p50 ms", http(route, conc, "p50_ms"), False)
+            t.row(f"{route} c={conc} p99 ms", http(route, conc, "p99_ms"), False)
+
+    clients = sorted(set(c["clients"] for a in apps for r in runs[a] for c in r["cable"]))
+    if clients:
+        t.header("Action Cable fan-out (one room; chatter.js subscriptions per client)")
+        for n in clients:
+            cab = lambda f: (lambda r: f(next(c for c in r["cable"] if c["clients"] == n)))
+            t.row(f"{n} clients: subscribed", cab(lambda c: c["ready"]), True)
+            t.row(f"{n} clients: connect+subscribe all (s)", cab(lambda c: c["connect_secs"]), False)
+            t.row(f"{n} clients: paced post→one client p50 ms", cab(lambda c: c["latency"]["per_client"]["p50_ms"]), False)
+            t.row(f"{n} clients: paced post→all clients p50 ms", cab(lambda c: c["latency"]["all_clients"]["p50_ms"]), False)
+            t.row(f"{n} clients: paced post→all clients p99 ms", cab(lambda c: c["latency"]["all_clients"]["p99_ms"]), False)
+            t.row(f"{n} clients: max sustained msgs/s (delivered to all)", cab(lambda c: c["throughput"]["delivered_msgs_per_sec"]), True)
+            t.row(f"{n} clients: deliveries/s (client×message)", cab(lambda c: c["throughput"]["frames_per_sec"]), True)
+            t.row(f"{n} clients: saturated post→all p50 ms", cab(lambda c: c["throughput"]["all_clients"]["p50_ms"]), False)
+            t.row(f"{n} clients: saturated POST p50 ms", cab(lambda c: c["throughput"]["post"]["p50_ms"]), False)
+
+    if any(r.get("upload", {}).get("runs") for a in apps for r in runs[a]):
+        t.header("Upload + thumbnail (black_hole.jpg, 505 KB)")
+        med = lambda key: (lambda r: statistics.median([x[key] for x in r["upload"]["runs"] if key in x and "error" not in x]))
+        t.row("POST with attachment (ms)", med("post_ms"), False)
+        t.row("then GET thumb → 200 (ms)", med("thumb_ms"), False)
+        t.row("POST → thumbnail served (ms)", lambda r: r["upload"]["median_total_ms"], False)
+
+    if clients and all("process_memory" in c for a in apps for r in runs[a] for c in r["cable"]):
+        t.header("Memory during cable fan-out, by process (MB, peak within the phase)", note=(
+            "App process: Rails' Puma master and workers (Action Cable runs in them), Rust's one campfire\n"
+            "process (its front server included), or the .NET app (Thruster is separate). Pss counts pages shared\n"
+            "between forked workers once; RssAnon counts them in every process. Per client: the container's Pss with\n"
+            "every client subscribed and idle, less its Pss before they connected, over the clients (KB)."))
+        for n in clients:
+            for phase, label in (("connected", "all subscribed, idle"), ("saturated", "saturated fan-out")):
+                t.row(f"{n} clients, {label}: app process Pss", procmem(n, phase, "app"), False)
+                t.row(f"{n} clients, {label}: app process RssAnon", procmem(n, phase, "app_anon"), False)
+                t.row(f"{n} clients, {label}: app + Redis + Thruster Pss", procmem(n, phase, "serving"), False)
+                t.row(f"{n} clients, {label}: whole container Pss", procmem(n, phase, "total"), False)
+            t.row(f"{n} clients: memory per subscribed client (KB)", procmem(n, "connected", "per_client_kb"), False)
+
+# ---- gzip against identity, per target ----
+
+pairs = [(a, b) for a in all_apps for b in all_apps if split(b)[0] == split(a)[0] and split(b)[1] == split(a)[1] | {"identity"}
+         and "identity" not in split(a)[1]]
+if pairs:
+    print("\n### Without gzip: `Accept-Encoding: identity` req/s over gzip req/s, same target and topology\n")
+    rows = ordered_unique((h["route"], h["conc"]) for a, b in pairs for r in runs[b] for h in r["http"])
+    print("| Route | " + " | ".join(f"{name(a)}{' (listener)' if 'listener' in split(a)[1] else ''}" for a, _ in pairs) + " |")
+    print("|---|" + "---|" * len(pairs))
+    for route, conc in rows:
+        cells = []
+        for a, b in pairs:
+            ga, _ = cell(values(a, http(route, conc, "rps")))
+            gb, _ = cell(values(b, http(route, conc, "rps")))
+            cells.append(f"{gb / ga:.2f}×" if ga and gb else "–")
+        print(f"| {route} c={conc} | " + " | ".join(cells) + " |")

@@ -1,0 +1,6 @@
+#!/bin/sh
+# The single application process. bin/boot enables the in-process front server; a direct app
+# launch still uses PORT. ASPNETCORE_HTTP_PORTS remains the fallback for local hosting.
+cd /rails || exit 1
+export ASPNETCORE_HTTP_PORTS="${ASPNETCORE_HTTP_PORTS:-${PORT:-3000}}"
+exec /usr/local/bin/campfire

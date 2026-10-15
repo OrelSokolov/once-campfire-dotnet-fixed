@@ -1,0 +1,35 @@
+@inherits ViewSlice<InvitePartial>
+<div class="flex flex-column align-center gap">
+  @{ var url = ViewContext.Url(Routes.Join(Model.JoinCode)); }
+
+  <label class="flex flex-column gap full-width" style="--row-gap: 0.5em">
+    <strong id="invite_label" class="invite-label">Share to invite more people</strong>
+    <span class="flex align-center gap input input--actor fill-white">
+      @ImageTag(ViewContext, "person-add.svg", Attributes().AriaHidden().Size(20).Class("colorize--black"))
+      <input type="text" class="input" id="invite_url" value="@url" aria-labelledby="invite_label" readonly>
+    </span>
+  </label>
+
+  <div class="flex align-center gap">
+    @LinkToZoomQrCodeOpen(url)
+      <span class="for-screen-reader">Show join link QR code</span>
+      @ImageTag(ViewContext, "qr-code.svg", Attributes().AriaHidden().Size(20).Class("colorize--black"))
+</a>
+    @ButtonToCopyToClipboardOpen(url)
+      <span class="for-screen-reader">Copy join link</span>
+      @ImageTag(ViewContext, "copy-paste.svg", Attributes().AriaHidden().Size(20).Class("colorize--black"))
+</button>
+    @WebShareSessionButtonOpen(url, "Link to join Campfire", "Hit this link to join me in Campfire and start chatting.")
+      <span class="for-screen-reader">Share join link</span>
+      @ImageTag(ViewContext, "share.svg", Attributes().AriaHidden().Size(20).Class("colorize--black"))
+</button>
+    @if (ViewContext.CanAdminister)
+    {
+        var button = ButtonTo(ViewContext, Routes.AccountJoinCode, Attributes().Class("btn btn--regenerate"));
+@:      @button.Open
+@:        @ImageTag(ViewContext, "refresh.svg", Attributes().AriaHidden().Size(20).Class("colorize--black"))
+        <span class="for-screen-reader">Regenerate join link</span>
+        @button.Close
+    }
+  </div>
+</div>

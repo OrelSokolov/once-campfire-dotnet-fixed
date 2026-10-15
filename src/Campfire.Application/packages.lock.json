@@ -1,0 +1,172 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net11.0": {
+      "AngleSharp": {
+        "type": "Direct",
+        "requested": "[1.8.2, )",
+        "resolved": "1.8.2",
+        "contentHash": "iRlkfBIhi+gTgTxBlYNT4PlmaiVEy7+qX3BmprAK4cYE1UjfSNFI4mEDyxC1qgtAKYg5rjGYgL3tJlzGF+Ukdg=="
+      },
+      "Dapper": {
+        "type": "Direct",
+        "requested": "[2.1.89, )",
+        "resolved": "2.1.89",
+        "contentHash": "1VjFE664wnxvuhlgP8kS4PeFFF4jqD3VkbIHW6Zlc52zuibgcz5ICnIHcQXlTp6pURpPNGLV0ZpNe5x9KePJnA=="
+      },
+      "Dapper.AOT": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "xcvzWs28jBBmQk4VB9fmTbIN3AztSb3KwuUXoWZJfcl5YtKnrN3N+GvXOOLkzZbNKGIcq0tQLch7pWPKUsjSyQ=="
+      },
+      "Microsoft.Data.Sqlite": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.2.26504.105, )",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "HTMsR2yafphuj6o0EdYPEsB2CBBSz/ixCew7/LblqmT31q1HiG5qKYy8s2XDM5YM7lmtNOhe7lNPiffcMe8j7A==",
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "[11.0.0-rc.2.26504.105, 12.0.0-a)",
+          "SQLitePCLRaw.bundle_e_sqlite3": "3.0.5",
+          "SQLitePCLRaw.core": "3.0.5"
+        }
+      },
+      "Microsoft.Extensions.Identity.Core": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.2.26504.105, )",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "3wcpVex+f1Fzw6NAZXLYByiOCWlNq+03vXn0mJ0Pm7pF0da5VnERLjqPvMg+S884P2HmQowhzI/5pWz3Cobd5g==",
+        "dependencies": {
+          "Microsoft.AspNetCore.Cryptography.KeyDerivation": "11.0.0-rc.2.26504.105",
+          "Microsoft.Extensions.Diagnostics": "11.0.0-rc.2.26504.105",
+          "Microsoft.Extensions.Logging": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.2.26504.105, )",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "Mkb6kHfPr4/txc4n/41yUiEBT44Haup2qnyecIO1ADo2QB4YxleZHsOvgYJT6roL1SNuFSpbeNpoe70BJ953Uw=="
+      },
+      "NetVips": {
+        "type": "Direct",
+        "requested": "[3.0.1, )",
+        "resolved": "3.0.1",
+        "contentHash": "DiPxaslLb/jx082BPiIU9bNfAb93rE6wB96riixb/Yldxptgacp9M3K6ne66oRdqJG4wwmElA1kawYeXJ0vYjw=="
+      },
+      "Microsoft.AspNetCore.Cryptography.Internal": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "/R35xaboFCU+uPPdShfh1K7Ii/914D8egKwIDMn66t5FEg9CXXeIdtkFkADj/lEo73epBwj5f+X6Ri+lcQn9VQ=="
+      },
+      "Microsoft.AspNetCore.Cryptography.KeyDerivation": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "LhbiJu7qbOebylpkX5dLjOUmSTXHwi0AkzmwKeXjivgRzfuH7pYWNlda7sg9DYUSWlSWpp6NYci81RbZMIRc3Q==",
+        "dependencies": {
+          "Microsoft.AspNetCore.Cryptography.Internal": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "Microsoft.Data.Sqlite.Core": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "1QCO8UCqwSbdNbNkf5B1RIDf7crc67HrnizWRM+4kr9nF+KjKdum8H+mnfekz6VoYlTzDsvbqRQkUz8hZho4MQ==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "3.0.5"
+        }
+      },
+      "Microsoft.Extensions.Configuration": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "jA9ENNmv5gfDFG0DnimIgGdD6RUDRIR+ozqn5S0dzCLlZdU0NFHJIRBA0pl2tP8P8wItosXen4ZvCkv9KweTUA=="
+      },
+      "Microsoft.Extensions.Configuration.Binder": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "ZoYmpwsArjRPTPPH/QhoJvygteVtuCK+Y//bxCpxfQpELfO4xWNmSj5iQ6UaNMTIvfANz1KaKff4VJNCCxq+Lw==",
+        "dependencies": {
+          "Microsoft.Extensions.Configuration": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "yjotWRNS6RNuJE1UNlVWgRTPfEhavYoGMdORt3Y90rB8bJo+GNVAsrnvclyPn830Ws2etLC94QcYBZ13Naszgw=="
+      },
+      "Microsoft.Extensions.Diagnostics": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "qKUt588f6I5G/AD0ZhEyyNbaOZwc1DDJ1WcVR3LlAau0QZ/pheWTFm+o62aTHHq9r8F4Gb9Fzn9rq7guXpLARQ==",
+        "dependencies": {
+          "Microsoft.Extensions.Configuration": "11.0.0-rc.2.26504.105",
+          "Microsoft.Extensions.Options.ConfigurationExtensions": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "Microsoft.Extensions.Logging": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "tGZ8lo15pCx32vlCtKprvLFtnNmPykudpw/62pkf4hN4kzwhZTiRkxgZwjl5PSwsaNmVDdwnZiYkqeBBxqRSiQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "Microsoft.Extensions.Options.ConfigurationExtensions": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "yHCV5jkkq2lVhwQJikZnkX4HalrFtBAkwObyCWO/7XTWt+wQS3r11mi+nkxKXoKpnpbveu7gDnR7G8zNmVgyPw==",
+        "dependencies": {
+          "Microsoft.Extensions.Configuration.Binder": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "SQLite": {
+        "type": "Transitive",
+        "resolved": "3.53.4",
+        "contentHash": "KN7jeWqgUPeBRe1FlcpZURzxomuKKEKHmBBQfg+Nx7NkY1LjKhzHvH+3ASkNvhayESE34nMBinL9CV21JfPRJw=="
+      },
+      "SQLitePCLRaw.bundle_e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.0.5",
+        "contentHash": "SW8iASIyWMrLzqabUHYQRvALhvD4ylSBsj4PgEVGwc36kQjc9xT5kSV/XQ9rU7nIpBWD+LPyX3Hlw5FzyUzGeQ==",
+        "dependencies": {
+          "SQLite": "3.53.4",
+          "SQLitePCLRaw.config.e_sqlite3": "3.0.5"
+        }
+      },
+      "SQLitePCLRaw.config.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.0.5",
+        "contentHash": "aSk8WE5tF2MybESMgtZAEyMVCAWA0nBqOMc48HFoa9UoSdtm3goDXVzNRnefeKIwE6bV9NaNXptn1F9ReMQI0Q==",
+        "dependencies": {
+          "SQLitePCLRaw.provider.e_sqlite3": "3.0.5"
+        }
+      },
+      "SQLitePCLRaw.core": {
+        "type": "Transitive",
+        "resolved": "3.0.5",
+        "contentHash": "k81AYXXRCw3Zj8rOhyBoCsx/U97KYDFI2CSKr/ijl5BwpsW/hX/4kBiDmerFaoust8nxBwa0IHQFw8MmSHRtnQ=="
+      },
+      "SQLitePCLRaw.provider.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.0.5",
+        "contentHash": "um8YSWduhhuskTG2bHfZrBqMNQOydfU8pcseT+cu5RivOGyoUbCrGXxgoRNTmRYw2VbMWnEZVVFcneZT/5dsBg==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "3.0.5"
+        }
+      }
+    },
+    "net11.0/linux-arm64": {
+      "SQLite": {
+        "type": "Transitive",
+        "resolved": "3.53.4",
+        "contentHash": "KN7jeWqgUPeBRe1FlcpZURzxomuKKEKHmBBQfg+Nx7NkY1LjKhzHvH+3ASkNvhayESE34nMBinL9CV21JfPRJw=="
+      }
+    },
+    "net11.0/linux-x64": {
+      "SQLite": {
+        "type": "Transitive",
+        "resolved": "3.53.4",
+        "contentHash": "KN7jeWqgUPeBRe1FlcpZURzxomuKKEKHmBBQfg+Nx7NkY1LjKhzHvH+3ASkNvhayESE34nMBinL9CV21JfPRJw=="
+      }
+    }
+  }
+}

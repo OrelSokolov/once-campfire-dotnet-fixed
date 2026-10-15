@@ -1,0 +1,696 @@
+#!/usr/bin/env dotnet
+// Runs plan v3 section 10's benchmark matrix in one command (docs/benchmarks.md): checks or builds the five target
+// images (bench/images) and the long-room seed (bench/long-room-seed), runs each suite with bench/run (at least 3
+// interleaved repetitions, apps never concurrent, order alternating, SERVER_CPUS/LOADGEN_CPUS pinned, host networking,
+// a wait for the load average before each run), and writes one report with every target's identity.
+//
+//   bench/m3 --dry-run            the plan: suites, apps, knobs and the estimated duration; nothing runs
+//   bench/m3                      everything (container, listener, long-room), 3 repetitions
+//   bench/m3 --reps 5 --out DIR   more repetitions; results in DIR (default bench/results/m3-<time>)
+//   bench/m3 --suites long-room   a subset: container, listener, long-room, counters
+//   bench/m3 --counters           also the EventPipe overhead suite (.NET with and without counters; off by default)
+//   bench/m3 --smoke              the harness at tiny scale (1 rep, 1-second runs, 20 cable clients, a 2,000-message
+//                                 room): checks every suite and target end to end; its numbers are INVALID
+//   bench/m3 --no-build           fail instead of building a missing image or seed
+//   bench/m3 --resume --no-build --out DIR   reuse validated completed repetitions with identical recorded settings
+//
+// Everything bench/run reads from the environment passes through (SERVER_CPUS, LOADGEN_CPUS, PORT, HTTP_SECS, the
+// *_IMAGE tags, ...); what is not set gets section 10's value below. Rootless Podman: put eng/docker-shim first on PATH.
+// Exit codes: 0 every suite ran, 1 a suite or a preparation step failed, 2 bad usage.
+#:property RestorePackagesWithLockFile=false
+#:include ../eng/lib/Repository.cs
+#:include ../eng/lib/Commands.cs
+#:include ../eng/lib/ArgumentReader.cs
+
+using System.Diagnostics;
+using System.Formats.Tar;
+using System.Globalization;
+using System.IO.Compression;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json.Nodes;
+
+return await M3.RunAsync( args ).ConfigureAwait( false );
+
+/// <summary>One bench/run invocation of the matrix: its apps, and the environment that makes it that suite.</summary>
+internal sealed record Suite( string Name, string Title, IReadOnlyList<string> Apps, IReadOnlyDictionary<string, string> Environment );
+
+internal static class M3
+{
+    private static readonly string[] Targets = ["reference", "rust", "rust-v0.1.1", "dotnet-aot", "dotnet-jit"];
+
+    /// <summary>Each target and the knob holding its image tag.</summary>
+    private static readonly (string Target, string Variable)[] TargetImageVariables =
+    [
+        ("reference", "REFERENCE_IMAGE"),
+        ("rust", "RUST_IMAGE"),
+        ("rust-v0.1.1", "RUST_V011_IMAGE"),
+        ("dotnet-aot", "DOTNET_AOT_IMAGE"),
+        ("dotnet-jit", "DOTNET_JIT_IMAGE"),
+    ];
+
+    /// <summary>Section 10's defaults; the caller's environment wins.</summary>
+    private static readonly Dictionary<string, string> Defaults = new( StringComparer.Ordinal )
+    {
+        ["SERVER_CPUS"] = "8-11",
+        ["LOADGEN_CPUS"] = "12-15",
+        ["NETWORK"] = "host",
+        ["HTTP_CONCS"] = "1 16 64",
+        ["HTTP_SECS"] = "8",
+        ["WARMUP_SECS"] = "5",
+        ["WARMUP_CONC"] = "4",
+        ["CABLE_CLIENTS"] = "100 1000 5000 10000",
+        ["CABLE_TPUT_SECS"] = "15",
+        ["CABLE_POSTERS"] = "4",
+        ["CABLE_LATENCY_MSGS"] = "30",
+        ["UPLOAD_REPS"] = "5",
+        ["LOAD_MAX"] = "1.5",
+        ["VALIDATE_EVERY"] = "1",
+        ["COUNTERS_BUFFER_MB"] = "400",
+        ["COUNTERS_CONFIG"] = "Microsoft-Windows-DotNETRuntime:0x1:5,System.Runtime:0:4:EventCounterIntervalSec=1",
+        ["REFERENCE_IMAGE"] = "campfire-reference:app",
+        ["RUST_IMAGE"] = "campfire-rust:3fe9f61",
+        ["RUST_V011_IMAGE"] = "campfire-rust:v0.1.1",
+        ["DOTNET_AOT_IMAGE"] = "campfire-dotnet:aot",
+        ["DOTNET_JIT_IMAGE"] = "campfire-dotnet:jit",
+        ["PORT"] = "4390",
+    };
+
+    /// <summary>--smoke: the smallest run that still exercises every suite, target and check.</summary>
+    private static readonly Dictionary<string, string> Smoke = new( StringComparer.Ordinal )
+    {
+        ["HTTP_CONCS"] = "1 4",
+        ["HTTP_SECS"] = "1",
+        ["WARMUP_SECS"] = "0.5",
+        ["CABLE_CLIENTS"] = "20",
+        ["CABLE_TPUT_SECS"] = "2",
+        ["CABLE_LATENCY_MSGS"] = "5",
+        ["UPLOAD_REPS"] = "1",
+        ["LOAD_MAX"] = "1000",
+    };
+
+    /// <summary>A docker inspect format: the image's revision label (bench/images sets it).</summary>
+    private const string RevisionLabelFormat = "{{index .Config.Labels \"org.opencontainers.image.revision\"}}";
+
+    private const string LongRoomSeed = "long-room";
+    private const string SmokeLongRoomSeed = "long-room-smoke";
+    private const int SmokeLongRoomMessages = 2_000;
+
+    public static async Task<int> RunAsync( string[] args )
+    {
+        var options = M3Options.Parse( args );
+        if ( options is null )
+        {
+            return 2;
+        }
+
+        var repo = Repository.Root;
+        var knobs = Knobs( options.Smoke );
+        var longRoomSeed = options.Smoke ? SmokeLongRoomSeed : LongRoomSeed;
+        var suites = Suites( options, longRoomSeed ).Where( suite => options.Suites.Contains( suite.Name ) ).ToList( );
+        var output = options.Output ?? DefaultOutput( repo, options.Smoke );
+
+        PrintPlan( suites, knobs, options );
+        if ( options.DryRun )
+        {
+            return 0;
+        }
+
+        Directory.CreateDirectory( output );
+        var log = Path.Combine( output, "m3.log" );
+        var started = DateTimeOffset.Now;
+        var stopwatch = Stopwatch.StartNew( );
+
+        if ( !await PrepareAsync( options, knobs, suites, longRoomSeed, log ).ConfigureAwait( false ) )
+        {
+            return 1;
+        }
+
+        var outcomes = new List<(Suite Suite, int Exit, TimeSpan Took)>( );
+        foreach ( var suite in suites )
+        {
+            var environment = new Dictionary<string, string>( knobs, StringComparer.Ordinal );
+            foreach ( var (name, value) in suite.Environment )
+            {
+                environment[name] = value;
+            }
+
+            environment["RESUME_COMPLETED"] = options.Resume ? "1" : "0";
+
+            Console.WriteLine( $"bench/m3: suite {suite.Name}: {string.Join( ',', suite.Apps )}" );
+            var took = Stopwatch.StartNew( );
+            List<string> runArguments =
+            [
+                "--apps", string.Join( ',', suite.Apps ),
+                "--reps", options.Reps.ToString( CultureInfo.InvariantCulture ),
+                "--out", Path.Combine( output, suite.Name ),
+            ];
+            var exit = await Commands.RunAsync( Path.Combine( repo, "bench", "run" ), runArguments, repo, environment, log ).ConfigureAwait( false );
+            outcomes.Add( (suite, exit, took.Elapsed) );
+            Console.WriteLine( $"bench/m3: suite {suite.Name} {(exit == 0 ? "done" : $"FAILED (exit code {exit})")} in {Duration( took.Elapsed )}" );
+        }
+
+        await WriteReportAsync( output, options, knobs, outcomes, started, stopwatch.Elapsed ).ConfigureAwait( false );
+        Console.WriteLine( $"bench/m3: report {Path.Combine( output, "report.md" )}" );
+
+        return outcomes.All( outcome => outcome.Exit == 0 ) ? 0 : 1;
+    }
+
+    /// <summary>bench/results/m3-&lt;local time&gt;, with -smoke after it for a smoke run.</summary>
+    private static string DefaultOutput( string repo, bool smoke )
+    {
+        var started = DateTime.Now.ToString( "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture );
+        var suffix = smoke ? "-smoke" : "";
+
+        return Path.Combine( repo, "bench", "results", $"m3-{started}{suffix}" );
+    }
+
+    private static Dictionary<string, string> Knobs( bool smoke )
+    {
+        var knobs = new Dictionary<string, string>( Defaults, StringComparer.Ordinal );
+        if ( smoke )
+        {
+            foreach ( var (name, value) in Smoke )
+            {
+                knobs[name] = value;
+            }
+        }
+
+        foreach ( var name in knobs.Keys.ToList( ) )
+        {
+            if ( Environment.GetEnvironmentVariable( name ) is { Length: > 0 } value )
+            {
+                knobs[name] = value;
+            }
+        }
+
+        return knobs;
+    }
+
+    /// <summary>The matrix. Apps within a suite interleave; bench/run reverses their order on even repetitions.</summary>
+    private static IEnumerable<Suite> Suites( M3Options options, string longRoomSeed )
+    {
+        yield return new Suite(
+            "container",
+            "Whole containers through their front server, with gzip and with Accept-Encoding: identity",
+            [.. Targets, .. Targets.Select( target => target + "-identity" )],
+            new Dictionary<string, string> { ["SUITES"] = "http cable upload" } );
+        yield return new Suite(
+            "listener",
+            "Each app's own listener on TARGET_PORT (Puma, Kestrel, Rust's app listener)",
+            [.. Targets.Select( target => target + "-listener" )],
+            new Dictionary<string, string> { ["SUITES"] = "http cable" } );
+        yield return new Suite(
+            "long-room",
+            "The long room (about 236,000 messages), .NET with and without Rust's extra index",
+            ["reference", "rust", "rust-v0.1.1", "dotnet-aot", "dotnet-aot-index", "dotnet-jit", "dotnet-jit-index"],
+            new Dictionary<string, string>
+            {
+                ["SUITES"] = "http",
+                ["SEED_NAME"] = longRoomSeed,
+                ["HTTP_ROUTES"] = "room_show messages_page",
+                ["BEFORE_LABEL"] = "long_room.before",
+            } );
+        if ( options.Counters )
+        {
+            yield return new Suite(
+                "counters",
+                "EventPipe counters and GC events: .NET with and without them (the overhead)",
+                ["dotnet-aot", "dotnet-aot-counters", "dotnet-jit", "dotnet-jit-counters"],
+                new Dictionary<string, string> { ["SUITES"] = "http cable", ["CABLE_CLIENTS"] = options.Smoke ? "20" : "1000" } );
+        }
+    }
+
+    private static void PrintPlan( List<Suite> suites, Dictionary<string, string> knobs, M3Options options )
+    {
+        var shownKnobs = knobs
+            .Where( knob => !knob.Key.EndsWith( "_IMAGE", StringComparison.Ordinal ) )
+            .Select( knob => $"{knob.Key}=\"{knob.Value}\"" );
+        Console.WriteLine( $"bench/m3: {(options.Smoke ? "SMOKE (numbers INVALID) " : "")}{options.Reps} repetition(s), knobs: "
+            + string.Join( ' ', shownKnobs ) );
+        var total = TimeSpan.Zero;
+        foreach ( var suite in suites )
+        {
+            var merged = new Dictionary<string, string>( knobs, StringComparer.Ordinal );
+            foreach ( var (name, value) in suite.Environment )
+            {
+                merged[name] = value;
+            }
+
+            var estimate = Estimate( suite, merged, options.Reps );
+            total += estimate;
+            Console.WriteLine( $"  {suite.Name,-10} ~{Duration( estimate )}  {suite.Title}" );
+            Console.WriteLine( $"             apps: {string.Join( ',', suite.Apps )}" );
+            Console.WriteLine( $"             {string.Join( ' ', suite.Environment.Select( variable => $"{variable.Key}=\"{variable.Value}\"" ) )}" );
+        }
+
+        Console.WriteLine( $"  estimated total ~{Duration( total )} (plus image builds and the long-room seed if missing: about 30 and 16 minutes)" );
+    }
+
+    /// <summary>
+    /// A rough duration: per app and repetition, the load-average wait (about 90 s after a loaded run), start and idle
+    /// measurement, each route's warm-up and measured runs, each cable size's connect, paced, saturated and drain phases,
+    /// and the uploads. Rails at 10,000 cable clients takes longest to connect (29 s in Rust's v0.1.1 report).
+    /// </summary>
+    private static TimeSpan Estimate( Suite suite, Dictionary<string, string> knobs, int reps )
+    {
+        double Number( string name ) => double.Parse( knobs[name], CultureInfo.InvariantCulture );
+        int Count( string name ) => knobs.TryGetValue( name, out var value ) ? value.Split( ' ', StringSplitOptions.RemoveEmptyEntries ).Length : 0;
+        var suites = knobs["SUITES"];
+        var waitSeconds = Number( "LOAD_MAX" ) >= 100 ? 0 : 90;
+        var seconds = 0.0;
+        foreach ( var app in suite.Apps )
+        {
+            var identity = app.Contains( "-identity", StringComparison.Ordinal );
+            var routes = knobs.TryGetValue( "HTTP_ROUTES", out var list ) ? list.Split( ' ' ).Length : 8;
+            var http = 0.0;
+            if ( suites.Contains( "http", StringComparison.Ordinal ) )
+            {
+                http = routes * (Number( "WARMUP_SECS" ) + 0.5 + Count( "HTTP_CONCS" ) * (Number( "HTTP_SECS" ) + 0.3));
+            }
+
+            var cable = 0.0;
+            if ( suites.Contains( "cable", StringComparison.Ordinal ) && !identity )
+            {
+                var cableSizes = knobs["CABLE_CLIENTS"]
+                    .Split( ' ', StringSplitOptions.RemoveEmptyEntries )
+                    .Select( value => double.Parse( value, CultureInfo.InvariantCulture ) );
+                foreach ( var clients in cableSizes )
+                {
+                    cable += (clients / 350) + 1 + (Number( "CABLE_LATENCY_MSGS" ) * 0.2) + Number( "CABLE_TPUT_SECS" ) + 8;
+                }
+            }
+
+            var upload = suites.Contains( "upload", StringComparison.Ordinal ) && !identity ? Number( "UPLOAD_REPS" ) * 0.5 : 0;
+            seconds += waitSeconds + 20 + http + cable + upload;
+        }
+
+        return TimeSpan.FromSeconds( seconds * reps );
+    }
+
+    private static async Task<bool> PrepareAsync(
+        M3Options options,
+        Dictionary<string, string> knobs,
+        List<Suite> suites,
+        string longRoomSeed,
+        string log )
+    {
+        var repo = Repository.Root;
+        if ( !(await Commands.CaptureAsync( "docker", ["version"] ).ConfigureAwait( false )).Succeeded )
+        {
+            await Console.Error.WriteLineAsync( "bench/m3: `docker version` fails; with rootless Podman put eng/docker-shim first on PATH" )
+                .ConfigureAwait( false );
+            return false;
+        }
+
+        var port = int.Parse( knobs["PORT"], CultureInfo.InvariantCulture );
+        foreach ( var busy in new[] { port, port + 1, port + 2 }.Where( candidate => !PortFree( candidate ) ) )
+        {
+            await Console.Error.WriteLineAsync( $"bench/m3: port {busy} is taken (bench/run needs PORT, PORT+1 and PORT+2)" ).ConfigureAwait( false );
+            return false;
+        }
+
+        return await EnsureImagesAsync( options, knobs, repo, log ).ConfigureAwait( false ) &&
+            await EnsureLongRoomSeedAsync( options, knobs, suites, longRoomSeed, repo, log ).ConfigureAwait( false );
+    }
+
+    private static async Task<bool> EnsureImagesAsync( M3Options options, Dictionary<string, string> knobs, string repo, string log )
+    {
+        // Images: every target must carry the revision it claims (bench/images labels it).
+        var images = new Dictionary<string, string>
+        {
+            ["reference"] = knobs["REFERENCE_IMAGE"],
+            ["rust"] = knobs["RUST_IMAGE"],
+            ["rust-v0.1.1"] = knobs["RUST_V011_IMAGE"],
+            ["dotnet-aot"] = knobs["DOTNET_AOT_IMAGE"],
+            ["dotnet-jit"] = knobs["DOTNET_JIT_IMAGE"],
+        };
+        var missing = new List<string>( );
+        foreach ( var (target, image) in images )
+        {
+            var revision = await Commands.CaptureAsync( "docker", ["image", "inspect", "-f", RevisionLabelFormat, image] ).ConfigureAwait( false );
+            var labeled = revision.Succeeded && revision.Trimmed.Length == 40;
+            if ( !revision.Succeeded || (!labeled && target != "reference") )
+            {
+                missing.Add( target );
+            }
+        }
+
+        if ( missing.Count > 0 )
+        {
+            if ( options.NoBuild )
+            {
+                await Console.Error.WriteLineAsync(
+                        $"bench/m3: missing or unlabeled images: {string.Join( ", ", missing )} (bench/images --only {string.Join( ',', missing )})" )
+                    .ConfigureAwait( false );
+                return false;
+            }
+
+            Console.WriteLine( $"bench/m3: building {string.Join( ", ", missing )} with bench/images" );
+            List<string> imagesArguments = [Path.Combine( repo, "bench", "images" ), "--only", string.Join( ',', missing )];
+            if ( await Commands.RunAsync( "dotnet", imagesArguments, repo, null, log ).ConfigureAwait( false ) != 0 )
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static async Task<bool> EnsureLongRoomSeedAsync(
+        M3Options options,
+        Dictionary<string, string> knobs,
+        List<Suite> suites,
+        string longRoomSeed,
+        string repo,
+        string log )
+    {
+        if ( suites.Any( suite => suite.Name == "long-room" ) )
+        {
+            var seeds = Repository.SeedDirectory;
+            var labels = Path.Combine( seeds, longRoomSeed, "labels.json" );
+            if ( !File.Exists( labels )
+                || !(await File.ReadAllTextAsync( labels ).ConfigureAwait( false )).Contains( "long_room.before", StringComparison.Ordinal ) )
+            {
+                if ( options.NoBuild )
+                {
+                    await Console.Error.WriteLineAsync( $"bench/m3: no {longRoomSeed} seed in {seeds} (bench/long-room-seed)" ).ConfigureAwait( false );
+                    return false;
+                }
+
+                List<string> seedArguments = options.Smoke
+                    ? ["--name", longRoomSeed, "--messages", SmokeLongRoomMessages.ToString( CultureInfo.InvariantCulture ), "--force"]
+                    : ["--name", longRoomSeed];
+                var environment = new Dictionary<string, string>( knobs, StringComparer.Ordinal );
+                Console.WriteLine( $"bench/m3: building the {longRoomSeed} seed with bench/long-room-seed" );
+                List<string> seedCommand = [Path.Combine( repo, "bench", "long-room-seed" ), .. seedArguments];
+                if ( await Commands.RunAsync( "dotnet", seedCommand, repo, environment, log ).ConfigureAwait( false ) != 0 )
+                {
+                    return false;
+                }
+            }
+
+            var seedLabels = JsonNode.Parse( await File.ReadAllTextAsync( labels ).ConfigureAwait( false ) )!;
+            if ( HasNativeProvenance( seedLabels, Path.Combine( seeds, longRoomSeed ) ) )
+            {
+                await Console.Error.WriteLineAsync( "bench/m3: this long-room seed was written with native credentials/tokens "
+                        + "or has ambiguous .NET writer provenance. Rebuild it with reference before cross-engine comparisons." )
+                    .ConfigureAwait( false );
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasNativeProvenance( JsonNode labels, string seed )
+    {
+        var writer = labels["long_room.writer"]?.GetValue<string>( );
+        var native = labels["long_room.native_security"]?.GetValue<bool>( );
+        return native == true || (writer?.StartsWith( "dotnet", StringComparison.Ordinal ) == true && native != false) ||
+            File.Exists( Path.Combine( seed, "db", "native-fixture.json" ) );
+    }
+
+    /// <summary>Hours and minutes (and seconds), past 24 hours too.</summary>
+    private static string Duration( TimeSpan span ) =>
+        string.Create( CultureInfo.InvariantCulture, $"{( int ) span.TotalHours}:{span.Minutes:D2}:{span.Seconds:D2}" );
+
+    private static bool PortFree( int port )
+    {
+        try
+        {
+            using var listener = new TcpListener( IPAddress.Loopback, port );
+            listener.Start( );
+            listener.Stop( );
+            return true;
+        }
+        catch ( SocketException )
+        {
+            return false;
+        }
+    }
+
+    private static async Task WriteReportAsync(
+        string output,
+        M3Options options,
+        Dictionary<string, string> knobs,
+        List<(Suite Suite, int Exit, TimeSpan Took)> outcomes,
+        DateTimeOffset started,
+        TimeSpan took )
+    {
+        var report = new StringBuilder( );
+        report.AppendLine( "# Benchmarks: plan v3 section 10" ).AppendLine( );
+        if ( options.Smoke )
+        {
+            report.AppendLine( "> **INVALID: a smoke run.** Tiny durations and client counts, one repetition, on whatever CPUs and load the machine had. "
+                + "It shows that every suite, target and check runs; its numbers measure nothing." ).AppendLine( );
+        }
+
+        report.AppendLine( CultureInfo.InvariantCulture, $"- Command: `bench/m3 {string.Join( ' ', options.Arguments )}`" );
+        report.AppendLine(
+            CultureInfo.InvariantCulture,
+            $"- Started {started:yyyy-MM-dd HH:mm:ss zzz}, took {Duration( took )}; {options.Reps} repetition(s) per suite." );
+        report.AppendLine( CultureInfo.InvariantCulture, $"- Knobs: {string.Join( ", ", knobs.Select( knob => $"`{knob.Key}={knob.Value}`" ) )}" );
+        foreach ( var (suite, exit, suiteTook) in outcomes )
+        {
+            var result = exit == 0 ? "ran" : $"**FAILED** (bench/run exit code {exit}; see m3.log)";
+            report.AppendLine( CultureInfo.InvariantCulture, $"- Suite `{suite.Name}`: {result} in {Duration( suiteTook )}." );
+        }
+
+        report.AppendLine( ).AppendLine( "## Images" ).AppendLine( );
+        report.AppendLine( "Unpacked: the image's size in local storage. "
+                + "Compressed: each layer gzipped (level 6), summed, as a registry would store them." )
+            .AppendLine( );
+        var measureCompressedSize = !options.Smoke && outcomes.All( outcome => outcome.Exit == 0 );
+        if ( !options.Smoke && !measureCompressedSize )
+        {
+            report.AppendLine( "Compressed sizes are pending until every selected suite completes successfully." ).AppendLine( );
+        }
+
+        report.AppendLine( "| Target | Tag | Image ID | Revision | Unpacked | Compressed |" ).AppendLine( "|---|---|---|---|---|---|" );
+        foreach ( var (target, variable) in TargetImageVariables )
+        {
+            var tag = knobs[variable];
+            var inspect = await Commands.CaptureAsync( "docker", ["image", "inspect", "-f", "{{.Id}}\t" + RevisionLabelFormat + "\t{{.Size}}", tag] )
+                .ConfigureAwait( false );
+            var fields = inspect.Trimmed.Split( '\t' );
+            if ( !inspect.Succeeded || fields.Length < 3 )
+            {
+                report.AppendLine( CultureInfo.InvariantCulture, $"| {target} | `{tag}` | (missing) | | | |" );
+                continue;
+            }
+
+            var compressed = measureCompressedSize ? await CompressedSizeAsync( tag, output ).ConfigureAwait( false ) : null;
+            var unpacked = long.Parse( fields[2], CultureInfo.InvariantCulture );
+            var revision = fields[1].Replace( "<no value>", "", StringComparison.Ordinal );
+            if ( string.IsNullOrWhiteSpace( revision ) )
+            {
+                revision = await EnvironmentRevisionAsync( tag ).ConfigureAwait( false ) ?? "(no revision label or environment)";
+            }
+
+            var imageId = fields[0].Replace( "sha256:", "", StringComparison.Ordinal )[..12];
+            var compressedSize = compressed is null ? "–" : $"{compressed / 1e6:N0} MB";
+            report.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {target} | `{tag}` | `{imageId}` | `{revision}` | {unpacked / 1e6:N0} MB | {compressedSize} |" );
+        }
+
+        foreach ( var (suite, _, _) in outcomes )
+        {
+            var suiteReport = Path.Combine( output, suite.Name, "report.md" );
+            report.AppendLine( ).AppendLine( CultureInfo.InvariantCulture, $"## Suite `{suite.Name}`: {suite.Title}" ).AppendLine( );
+            if ( !File.Exists( suiteReport ) )
+            {
+                report.AppendLine( "(no report: the suite failed before it finished)" );
+            }
+            else
+            {
+                report.AppendLine( await File.ReadAllTextAsync( suiteReport ).ConfigureAwait( false ) );
+                List<string> metricsArguments = [Path.Combine( Repository.Root, "bench", "metrics-report.cs" ), Path.Combine( output, suite.Name )];
+                var metrics = await Commands.CaptureAsync( "dotnet", metricsArguments ).ConfigureAwait( false );
+                if ( !metrics.Succeeded )
+                {
+                    throw new InvalidOperationException( $"HTTP metric report failed: {metrics.Error}" );
+                }
+
+                report.AppendLine( ).AppendLine( metrics.Output );
+            }
+        }
+
+        await File.WriteAllTextAsync( Path.Combine( output, "report.md" ), report.ToString( ) ).ConfigureAwait( false );
+    }
+
+    /// <summary>The GIT_REVISION in the image's environment (the reference sets no revision label), if any.</summary>
+    private static async Task<string?> EnvironmentRevisionAsync( string tag )
+    {
+        const string Variable = "GIT_REVISION=";
+        var environment = await Commands.CaptureAsync( "docker", ["image", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", tag] )
+            .ConfigureAwait( false );
+
+        return environment.Output.Split( '\n' ).FirstOrDefault( line => line.StartsWith( Variable, StringComparison.Ordinal ) )?[Variable.Length..];
+    }
+
+    /// <summary>The image's layers gzipped at level 6 and summed, from `docker save` (what a registry push stores).</summary>
+    private static async Task<long?> CompressedSizeAsync( string tag, string output )
+    {
+        var archive = Path.Combine( output, ".image.tar" );
+        try
+        {
+            if ( !(await Commands.CaptureAsync( "docker", ["save", "-o", archive, tag] ).ConfigureAwait( false )).Succeeded )
+            {
+                return null;
+            }
+
+            long total = 0;
+            var stream = File.OpenRead( archive );
+            await using ( stream.ConfigureAwait( false ) )
+            {
+                using var reader = new TarReader( stream );
+                while ( await reader.GetNextEntryAsync( ).ConfigureAwait( false ) is { } entry )
+                {
+                    if ( entry.DataStream is null || entry.Length < 1024 || entry.Name.EndsWith( ".json", StringComparison.Ordinal ) )
+                    {
+                        continue;
+                    }
+
+                    var counter = new CountingStream( );
+                    var gzip = new GZipStream( counter, CompressionLevel.Optimal, leaveOpen: true );
+                    await using ( gzip.ConfigureAwait( false ) )
+                    {
+                        await entry.DataStream.CopyToAsync( gzip ).ConfigureAwait( false );
+                    }
+
+                    total += counter.Length;
+                }
+            }
+
+            return total;
+        }
+        finally
+        {
+            File.Delete( archive );
+        }
+    }
+}
+
+/// <summary>A write-only stream that only counts what is written to it.</summary>
+internal sealed class CountingStream : Stream
+{
+    private long _length;
+
+    public override bool CanRead => false;
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => true;
+
+    public override long Length => _length;
+
+    public override long Position
+    {
+        get => _length;
+        set => throw new NotSupportedException( );
+    }
+
+    public override void Flush( )
+    {
+    }
+
+    public override int Read( byte[] buffer, int offset, int count ) => throw new NotSupportedException( );
+
+    public override long Seek( long offset, SeekOrigin origin ) => throw new NotSupportedException( );
+
+    public override void SetLength( long value ) => throw new NotSupportedException( );
+
+    public override void Write( byte[] buffer, int offset, int count ) => _length += count;
+
+    public override void Write( ReadOnlySpan<byte> buffer ) => _length += buffer.Length;
+
+    public override ValueTask WriteAsync( ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default )
+    {
+        _length += buffer.Length;
+
+        return ValueTask.CompletedTask;
+    }
+}
+
+internal sealed record M3Options(
+    int Reps,
+    string? Output,
+    IReadOnlySet<string> Suites,
+    bool Counters,
+    bool DryRun,
+    bool Smoke,
+    bool NoBuild,
+    bool Resume,
+    IReadOnlyList<string> Arguments )
+{
+    public static M3Options? Parse( string[] args )
+    {
+        var reps = 3;
+        string? output = null;
+        var suites = new HashSet<string>( ["container", "listener", "long-room"], StringComparer.Ordinal );
+        var counters = false;
+        var dryRun = false;
+        var smoke = false;
+        var noBuild = false;
+        var resume = false;
+        var reader = new ArgumentReader( args );
+        while ( reader.MoveNext( ) )
+        {
+            switch ( reader.Current )
+            {
+                case "--reps" when reader.TryTakePositive( out int count ):
+                    reps = count;
+                    break;
+                case "--out" when reader.TryTakeValue( out var path ):
+                    output = Path.GetFullPath( path );
+                    break;
+                case "--suites" when reader.TryTakeValue( out var names ):
+                    suites = new HashSet<string>( names.Split( ',', StringSplitOptions.RemoveEmptyEntries ), StringComparer.Ordinal );
+                    counters |= suites.Contains( "counters" );
+                    break;
+                case "--counters":
+                    counters = true;
+                    suites.Add( "counters" );
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                case "--smoke":
+                    smoke = true;
+                    break;
+                case "--no-build":
+                    noBuild = true;
+                    break;
+                case "--resume":
+                    resume = true;
+                    break;
+                default:
+                    Console.Error.WriteLine( $"bench/m3: unknown option {reader.Current}" );
+                    return null;
+            }
+        }
+
+        var unknown = suites.Except( ["container", "listener", "long-room", "counters"] ).ToList( );
+        if ( unknown.Count > 0 )
+        {
+            Console.Error.WriteLine( $"bench/m3: unknown suite(s) {string.Join( ", ", unknown )}" );
+            return null;
+        }
+
+        if ( smoke && !args.Contains( "--reps" ) )
+        {
+            reps = 1;
+        }
+
+        if ( resume && (output is null || !noBuild) )
+        {
+            Console.Error.WriteLine( "bench/m3: --resume requires --out and --no-build" );
+            return null;
+        }
+
+        return new M3Options( reps, output, suites, counters, dryRun, smoke, noBuild, resume, args );
+    }
+}

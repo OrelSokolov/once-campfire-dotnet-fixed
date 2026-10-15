@@ -1,0 +1,24 @@
+@inherits PageLayoutSlice<RoomPageLayout>
+@* `render layout: "rooms/layouts/new" do ... end`: a page layout inside the application layout. *@
+
+
+<section class="panel txt-align-center" style="view-transition-name: new-room">
+  @await RenderBodyAsync()
+</section>
+@functions {
+    protected override string? PageTitle => "New chat room";
+
+    protected override async Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackToLastRoomVisited(ViewContext)
+  </div>
+        }
+        else
+        {
+            await RenderSectionAsync( sectionName );
+        }
+    }
+}

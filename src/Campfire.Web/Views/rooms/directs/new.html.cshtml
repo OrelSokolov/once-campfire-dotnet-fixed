@@ -1,0 +1,31 @@
+@inherits PageSlice<DirectsNewPage>
+@* rooms/directs/new.html.erb: a proxy named `new` doesn't compile, so the file keeps its format suffix. *@
+@{ var form = FormWith(ViewContext, Routes.RoomsDirects).Model(ParamNames.Rooms.DirectKey).Class("flex gap flex-item-grow").Data("controller", "form")
+    .Data("action", "keydown.esc->form#cancel"); }
+<turbo-frame id="direct_rooms_control" target="_top">
+  <div class="directs directs--new flex flex-column gap">
+    @form.Open()
+      @LinkToOpen(Routes.UserSidebar, Attributes().Class("btn flex-item-no-shrink").Data("turbo_frame", "user_sidebar").Data("form_target", "cancel"))
+        @ImageTag(ViewContext, "arrow-left.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Cancel changes</span>
+</a>
+      <section class="autocomplete__container unpad input input--actor">
+        <div class="autocomplete__input input flex flex-wrap position-relative flex-item-grow"
+            data-controller="autocomplete" data-autocomplete-url-value="@Routes.AutocompletableUsers">
+          <select name="user_ids[]" data-autocomplete-target="select" data-template-id="autocompletable-user" multiple="true" hidden required></select>
+
+          @await Partial(Views.users.autocompletables._template.Create(new ContextPartial(ViewContext)))
+
+          @form.TextField(ParamNames.Rooms.UserIdsInput, null, Attributes().Autocomplete("off").Attribute("autocorrect", "off")
+              .Attribute("data-1p-ignore", "true").Class("autocomplete__input input flex flex-wrap position-relative").Data("autocomplete_target", "input")
+              .Data("action", "input->autocomplete#search keydown->autocomplete#didPressKey"))
+        </div>
+      </section>
+
+      @ButtonTagOpen(Attributes().Class("btn btn--reversed flex-item-no-shrink").Type("submit"))
+        @ImageTag(ViewContext, "check.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Start Ping</span>
+</button></form>
+    <span class="txt-small translucent pad-inline-half center">Type names to ping someone…</span>
+  </div>
+</turbo-frame>

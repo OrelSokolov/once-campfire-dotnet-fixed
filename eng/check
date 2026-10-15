@@ -1,0 +1,72 @@
+#!/usr/bin/env dotnet
+// The normal gate: locked restore, Release build, every test suite, formatting, the Native AOT publish with its
+// native smoke run (eng/aot), and the byte-identity media tests inside the pinned Debian toolchain.
+//
+//   eng/check              run everything
+//   eng/check --no-format  skip `dotnet format` (slow on a cold machine)
+//   eng/check --no-aot     skip the Native AOT publish and native smoke run (say so when reporting results)
+//   eng/check --no-media   skip the toolchain run (say so when reporting results)
+//
+// The local test run leaves out [Trait("Media", "Debian")] by name: those tests need the reference image's libvips
+// and ffmpeg builds and fail on purpose anywhere else. eng/toolchain/test runs them. The test run fails when a suite
+// discovers zero tests (Microsoft.Testing.Platform exit code). Skipped steps are listed at the end.
+#:property RestorePackagesWithLockFile=false
+#:include lib/Repository.cs
+#:include lib/Commands.cs
+
+var repo = Repository.Root;
+var format = true;
+var aot = true;
+var media = true;
+foreach ( var argument in args )
+{
+    switch ( argument )
+    {
+        case "--no-format":
+            format = false;
+            break;
+        case "--no-aot":
+            aot = false;
+            break;
+        case "--no-media":
+            media = false;
+            break;
+        default:
+            Console.Error.WriteLine( $"eng/check: unknown option {argument}" );
+            return 2;
+    }
+}
+
+(string Name, bool Run, string SkipFlag, string File, string[] Arguments)[] steps =
+[
+    ("SDK", true, "", "dotnet", ["--version"]),
+    ("restore", true, "", "dotnet", ["restore", "Campfire.slnx", "--locked-mode"]),
+    ("build", true, "", "dotnet", ["build", "Campfire.slnx", "-c", "Release", "--no-restore"]),
+    ("tests", true, "", "dotnet", ["test", "--solution", "Campfire.slnx", "-c", "Release", "--no-build", "--", "--filter-not-trait", "Media=Debian"]),
+    ("format", format, "--no-format", "dotnet", ["format", "Campfire.slnx", "--verify-no-changes", "--no-restore"]),
+    ("the Native AOT publish and native smoke run", aot, "--no-aot", "dotnet", [Path.Combine( repo, "eng", "aot" )]),
+    ("the native front-server TLS and HTTP2 smoke", aot, "--no-aot", "dotnet", [Path.Combine( repo, "eng", "front-smoke" )]),
+    ("the Debian media tests", media, "--no-media", Path.Combine( repo, "eng", "toolchain", "test" ), []),
+];
+
+var skipped = new List<string>( );
+foreach ( var step in steps )
+{
+    if ( !step.Run )
+    {
+        Console.Error.WriteLine( $"eng/check: SKIPPED {step.Name} ({step.SkipFlag})" );
+        skipped.Add( step.Name );
+        continue;
+    }
+
+    var exitCode = await Commands.RunAsync( step.File, step.Arguments, repo );
+    if ( exitCode != 0 )
+    {
+        Console.Error.WriteLine( $"eng/check: {step.Name} FAILED (exit code {exitCode})" );
+        return exitCode;
+    }
+}
+
+Console.Error.WriteLine( skipped.Count == 0 ? "eng/check: passed" : $"eng/check: passed, with SKIPPED steps: {string.Join( ", ", skipped )}" );
+
+return 0;

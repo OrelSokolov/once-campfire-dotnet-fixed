@@ -1,0 +1,7 @@
+{
+  "to_json": "\"\\u003cb\\u003eZoë\\u003c/b\\u003e \\u0026 \\\"Ünïcødé\\\" 'quotes'  line para 😀 tab\\tnewline\\n bs\\\\ slash/ \\u003c/script\\u003e\"",
+  "hash_to_json": "{\"text\":\"\\u003cb\\u003eZoë\\u003c/b\\u003e \\u0026 \\\"Ünïcødé\\\" 'quotes'  line para 😀 tab\\tnewline\\n bs\\\\ slash/ \\u003c/script\\u003e\"}",
+  "json_generate": "\"<b>Zoë</b> & \\\"Ünïcødé\\\" 'quotes'  line para 😀 tab\\tnewline\\n bs\\\\ slash/ </script>\"",
+  "hash_json_generate": "{\"text\":\"<b>Zoë</b> & \\\"Ünïcødé\\\" 'quotes'  line para 😀 tab\\tnewline\\n bs\\\\ slash/ </script>\"}",
+  "json_dump": "\"<b>Zoë</b> & \\\"Ünïcødé\\\" 'quotes'  line para 😀 tab\\tnewline\\n bs\\\\ slash/ </script>\""
+}

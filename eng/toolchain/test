@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Runs the storage tests inside the media toolchain image (eng/toolchain/Dockerfile) with Podman, so
+# the byte-identity tests ([Trait("Media", "Debian")]) run against the reference image's libvips and
+# ffmpeg builds. Outside this image those tests fail on purpose; leave them out locally with
+#   dotnet test --project tests/Campfire.Application.Tests -c Release -- --filter-not-trait "Media=Debian"
+#
+#   eng/toolchain/test                                  # build the image if needed, run the storage tests
+#   eng/toolchain/test --filter-class <FullName>        # extra arguments go to the test run
+#
+# Environment:
+#   CAMPFIRE_TOOLCHAIN_IMAGE  image tag (default: localhost/campfire-media-toolchain:<Dockerfile hash>)
+#   CAMPFIRE_REFERENCE_DIR    a Rails Campfire checkout at 90b3300, when the reference submodule is empty
+#   DEBIAN_SNAPSHOT           override the Dockerfile's snapshot.debian.org timestamp (experiments only)
+#   PODMAN                    the container tool (default: podman; docker works too)
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+podman="${PODMAN:-podman}"
+dockerfile="$root/eng/toolchain/Dockerfile"
+build_args=()
+suffix=""
+if [[ -n "${DEBIAN_SNAPSHOT:-}" ]]; then
+  build_args+=(--build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT")
+  suffix="-$DEBIAN_SNAPSHOT"
+fi
+tag="${CAMPFIRE_TOOLCHAIN_IMAGE:-localhost/campfire-media-toolchain:$(sha256sum "$dockerfile" | cut -c1-12)$suffix}"
+
+reference="${CAMPFIRE_REFERENCE_DIR:-$root/reference}"
+if [[ ! -f "$reference/test/fixtures/files/moon.jpg" ]]; then
+  echo "The Rails fixtures are missing under $reference." >&2
+  echo "Run 'git submodule update --init reference', or set CAMPFIRE_REFERENCE_DIR to a Campfire checkout at 90b3300." >&2
+  exit 1
+fi
+reference="$(cd "$reference" && pwd)"
+
+if ! "$podman" image inspect "$tag" > /dev/null 2>&1; then
+  "$podman" build "${build_args[@]}" -t "$tag" -f "$dockerfile" "$root/eng/toolchain"
+fi
+
+# The repository is mounted read-only and copied into the container, so the container's bin/ and
+# obj/ never mix with the host's. NuGet packages persist in a named volume between runs.
+"$podman" run --rm \
+  --volume "$root:/repo:ro" \
+  --volume "$reference:/reference:ro" \
+  --volume campfire-toolchain-nuget:/nuget \
+  --env CAMPFIRE_REFERENCE_DIR=/reference \
+  "$tag" bash -euo pipefail -c '
+    echo "== media toolchain"; cat /etc/campfire-media-toolchain
+    tar -C /repo --exclude=./reference --exclude=./bench --exclude=./.git --exclude="*/bin" --exclude="*/obj" -cf - . | tar -C /work -xf -
+    dotnet test --project tests/Campfire.Application.Tests -c Release -- --filter-namespace Campfire.Application.Tests.Storage "$@"
+  ' eng/toolchain/test "$@"

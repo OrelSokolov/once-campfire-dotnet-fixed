@@ -1,0 +1,596 @@
+#!/usr/bin/env dotnet
+// The Native AOT gate (docs/development.md): publishes Campfire.Web as the native binary the image ships, fails on
+// any trim or AOT warning, then starts that binary over an empty storage directory and sends it smoke requests.
+//
+//   eng/aot                    publish, check the warnings, smoke-test the native binary
+//   eng/aot --no-smoke         publish and check the warnings only (reported as SKIPPED)
+//   eng/aot --rid linux-arm64  another Linux runtime identifier (default: the host's)
+//
+// Output goes to artifacts/aot/<rid>/campfire. The smoke run needs the Rails checkout's public/ and assets:
+// <repo>/reference, or CAMPFIRE_REFERENCE_DIR where the submodule is empty (worktrees).
+// Exit codes: 0 pass, 1 a check failed, 2 bad usage.
+#:property RestorePackagesWithLockFile=false
+#:include lib/Repository.cs
+#:include lib/Commands.cs
+#:include lib/ArgumentReader.cs
+
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+
+return await AotGate.RunAsync( args );
+
+/// <summary>
+/// A trim or AOT diagnostic (IL2xxx, IL3xxx) from a publish. <paramref name="Origin"/> is the source file relative to
+/// the repository, the assembly, or the member ILC names.
+/// </summary>
+internal sealed record IlWarning( string Code, string Origin, string Message, string Line );
+
+internal static class AotGate
+{
+    private const string Project = "src/Campfire.Web/Campfire.Web.csproj";
+    private const string Binary = "campfire";
+
+    public static async Task<int> RunAsync( string[] args )
+    {
+        var smoke = true;
+        string? runtimeIdentifier = null;
+        var reader = new ArgumentReader( args );
+        while ( reader.MoveNext( ) )
+        {
+            switch ( reader.Current )
+            {
+                case "--no-smoke":
+                    smoke = false;
+                    break;
+                case "--rid" when reader.TryTakeValue( out var identifier ):
+                    runtimeIdentifier = identifier;
+                    break;
+                default:
+                    await Console.Error.WriteLineAsync( $"eng/aot: unknown option {reader.Current}" );
+                    return 2;
+            }
+        }
+
+        if ( !OperatingSystem.IsLinux( ) )
+        {
+            await Console.Error.WriteLineAsync( "eng/aot: the app publishes for Linux only" );
+            return 2;
+        }
+
+        runtimeIdentifier ??= RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "linux-arm64" : "linux-x64";
+        var repo = Repository.Root;
+        var output = Path.Combine( repo, "artifacts", "aot", runtimeIdentifier, Binary );
+
+        var passed = await PublishAsync( repo, runtimeIdentifier, output );
+        if ( !smoke )
+        {
+            await Console.Error.WriteLineAsync( "eng/aot: SKIPPED the native smoke run (--no-smoke)" );
+            return passed ? 0 : 1;
+        }
+
+        if ( passed )
+        {
+            passed = await NativeSmoke.RunAsync( repo, Path.Combine( output, Binary ) );
+        }
+
+        Console.WriteLine( passed ? "eng/aot: passed" : "eng/aot: FAILED" );
+
+        return passed ? 0 : 1;
+    }
+
+    /// <summary>
+    /// A locked restore, then the publish exactly as the image's <c>build-aot</c> stage runs it: trim and AOT warnings
+    /// are errors there, and this gate lists every one it finds by origin.
+    /// </summary>
+    private static async Task<bool> PublishAsync( string repo, string runtimeIdentifier, string output )
+    {
+        Console.WriteLine( $"eng/aot: publishing {Project} as Native AOT for {runtimeIdentifier} -> {Path.GetRelativePath( repo, output )}" );
+
+        var restore = await Commands.CaptureLinesAsync( "dotnet", ["restore", Project, "--locked-mode"], repo );
+        if ( restore.ExitCode != 0 )
+        {
+            Console.WriteLine( string.Join( '\n', restore.Lines ) );
+            return false;
+        }
+
+        var stopwatch = Stopwatch.StartNew( );
+        var publish = await Commands.CaptureLinesAsync(
+            "dotnet",
+            ["publish", Project, "-c", "Release", "-r", runtimeIdentifier, "--no-restore", "-o", output, "-tl:off", "-clp:NoSummary"],
+            repo );
+        var warnings = Warnings.Parse( publish.Lines, repo );
+        Warnings.Report( warnings );
+        if ( publish.ExitCode != 0 )
+        {
+            var errors = publish.Lines.Where( line => line.Contains( " error ", StringComparison.Ordinal ) ).Distinct( );
+            Console.WriteLine( string.Join( '\n', errors ) );
+        }
+
+        Sizes.Report( output, Binary );
+        var passed = publish.ExitCode == 0 && warnings.Count == 0;
+        Console.WriteLine( $"eng/aot: publish {(passed ? "passed" : "FAILED")} in {stopwatch.Elapsed.TotalSeconds:F0} s" );
+
+        return passed;
+    }
+}
+
+/// <summary>Reads the trim and AOT diagnostics out of MSBuild's console output.</summary>
+internal static partial class Warnings
+{
+    public static List<IlWarning> Parse( IReadOnlyList<string> lines, string repo )
+    {
+        var found = new Dictionary<string, IlWarning>( StringComparer.Ordinal );
+        foreach ( var line in lines )
+        {
+            var match = WarningLine( ).Match( line );
+            if ( !match.Success )
+            {
+                continue;
+            }
+
+            var code = match.Groups["code"].Value;
+            var message = match.Groups["message"].Value;
+            var (origin, position) = Origin( match.Groups["origin"].Value.Trim( ), message, repo );
+
+            // The C# analyzer and ILC can both report one site; one per code and site (or message, for ILC's own).
+            found.TryAdd( $"{code}|{origin}|{position ?? message}", new IlWarning( code, origin, message, line.Trim( ) ) );
+        }
+
+        return [.. found.Values];
+    }
+
+    /// <summary>Prints the count by origin, then each diagnostic.</summary>
+    public static void Report( List<IlWarning> warnings )
+    {
+        Console.WriteLine( $"eng/aot: {warnings.Count} trim/AOT warnings" );
+        foreach ( var origin in warnings.GroupBy( warning => OriginGroup( warning.Origin ) ).OrderBy( group => group.Key, StringComparer.Ordinal ) )
+        {
+            var codes = string.Join( ", ", origin.Select( warning => warning.Code ).Distinct( ).Order( StringComparer.Ordinal ) );
+            Console.WriteLine( $"  {origin.Count( ),3}  {origin.Key} ({codes})" );
+        }
+
+        foreach ( var warning in warnings )
+        {
+            Console.WriteLine( $"  {warning.Line}" );
+        }
+    }
+
+    /// <summary>The project folder or assembly a diagnostic's origin belongs to, for the summary.</summary>
+    private static string OriginGroup( string origin )
+    {
+        if ( origin.StartsWith( "src/", StringComparison.Ordinal ) )
+        {
+            var parts = origin.Split( '/' );
+            return parts.Length > 3 ? $"{parts[1]}/{parts[2]}" : parts[1];
+        }
+
+        var dots = origin.Split( '.' );
+        return dots.Length > 3 ? string.Join( '.', dots[..3] ) : origin;
+    }
+
+    /// <summary>
+    /// A source file relative to the repository (with its position), an assembly (<c>X.dll : warning IL2104</c>), or,
+    /// for <c>ILC : warning</c> lines, the member ILC names first in the message.
+    /// </summary>
+    private static (string Origin, string? Position) Origin( string origin, string message, string repo )
+    {
+        if ( origin == "ILC" )
+        {
+            var member = message.Split( ':', 2 )[0].Trim( );
+            return (member, null);
+        }
+
+        if ( origin.EndsWith( ".dll", StringComparison.Ordinal ) )
+        {
+            return (Path.GetFileNameWithoutExtension( origin ), null);
+        }
+
+        var position = Position( ).Match( origin );
+        var path = position.Success ? origin[..position.Index] : origin;
+        var line = position.Success ? position.Groups["line"].Value : null;
+        var relative = Path.IsPathRooted( path ) ? Path.GetRelativePath( repo, path ) : path;
+
+        return (relative.Replace( '\\', '/' ), line);
+    }
+
+    [GeneratedRegex( @"^(?<origin>.*?)\s*:\s*(?:(?:Trim|AOT|Single-file) analysis )?"
+        + @"(?:warning|error) (?<code>IL[23]\d{3}):\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$" )]
+    private static partial Regex WarningLine( );
+
+    [GeneratedRegex( @"\((?<line>\d+)(?:,\d+)?\)$" )]
+    private static partial Regex Position( );
+}
+
+/// <summary>The published binary's size and the size of everything it ships with.</summary>
+internal static class Sizes
+{
+    public static void Report( string output, string binaryName )
+    {
+        var binary = new FileInfo( Path.Combine( output, binaryName ) );
+        if ( !binary.Exists )
+        {
+            return;
+        }
+
+        // Debug symbols (.dbg) stay out of the image.
+        var shipped = Directory.EnumerateFiles( output )
+            .Where( file => !file.EndsWith( ".dbg", StringComparison.Ordinal ) )
+            .Sum( file => new FileInfo( file ).Length );
+        Console.WriteLine( $"eng/aot: binary {Megabytes( binary.Length )}, published files without symbols {Megabytes( shipped )}" );
+    }
+
+    public static string Megabytes( long bytes ) => $"{bytes / 1_000_000.0:F1} MB";
+}
+
+/// <summary>
+/// Starts the native binary over an empty storage directory, so the boot sequence runs in full (storage directories,
+/// the schema into an empty database, <c>Membership.disconnect_all</c>), and checks health, a file from public/, a
+/// routing error, a Rails-routed 404 whose before-action halts the chain, a routed controller the reference doesn't
+/// have (500), and a query through the callback chain (sign-in with no user yet redirects to the first run).
+/// </summary>
+internal static class NativeSmoke
+{
+    private static readonly TimeSpan BootTimeout = TimeSpan.FromSeconds( 30 );
+
+    public static async Task<bool> RunAsync( string repo, string binary )
+    {
+        var reference = Environment.GetEnvironmentVariable( "CAMPFIRE_REFERENCE_DIR" ) ?? Path.Combine( repo, "reference" );
+        var publicDirectory = Path.Combine( reference, "public" );
+        if ( !File.Exists( Path.Combine( publicDirectory, "404.html" ) ) )
+        {
+            Console.WriteLine( $"eng/aot: smoke FAILED: no Rails checkout at {reference} (set CAMPFIRE_REFERENCE_DIR)" );
+            return false;
+        }
+
+        var storage = Directory.CreateTempSubdirectory( "campfire-aot-smoke-" );
+        try
+        {
+            return await RunInAsync( repo, binary, reference, storage.FullName );
+        }
+        finally
+        {
+            storage.Delete( recursive: true );
+        }
+    }
+
+    private static async Task<bool> RunInAsync( string repo, string binary, string reference, string storage )
+    {
+        var port = FreePort( );
+        var environment = new Dictionary<string, string>( StringComparer.Ordinal )
+        {
+            ["SECRET_KEY_BASE_DUMMY"] = "1",
+            ["DISABLE_SSL"] = "1",
+            ["PORT"] = port.ToString( CultureInfo.InvariantCulture ),
+            ["CAMPFIRE_STORAGE_PATH"] = storage,
+            ["CAMPFIRE_REFERENCE_DIR"] = reference,
+            ["CAMPFIRE_PUBLIC_PATH"] = Path.Combine( reference, "public" ),
+            ["CAMPFIRE_VENDOR_ASSETS_DIR"] = Path.Combine( repo, "vendor", "assets" ),
+        };
+        var start = Commands.StartInfo( binary, [], storage, environment );
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+
+        Console.WriteLine( $"eng/aot: smoke: starting {Path.GetRelativePath( repo, binary )} on 127.0.0.1:{port}" );
+        var log = new StringBuilder( );
+        var stopwatch = Stopwatch.StartNew( );
+        using var process = Process.Start( start )!;
+        process.OutputDataReceived += ( _, line ) => Append( log, line.Data );
+        process.ErrorDataReceived += ( _, line ) => Append( log, line.Data );
+        process.BeginOutputReadLine( );
+        process.BeginErrorReadLine( );
+
+        using var http = new HttpClient( new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false } )
+        {
+            BaseAddress = new Uri( $"http://127.0.0.1:{port}" ),
+            Timeout = TimeSpan.FromSeconds( 10 ),
+        };
+        try
+        {
+            var ready = await WaitUntilUpAsync( http, process );
+            if ( !ready )
+            {
+                Console.WriteLine( $"eng/aot: smoke FAILED: /up never answered 200\n{log}" );
+                return false;
+            }
+
+            Console.WriteLine( $"eng/aot: smoke: /up answered 200 {stopwatch.ElapsedMilliseconds} ms after start" );
+            var passed = await CheckAllAsync( http, Path.Combine( reference, "public" ) );
+            if ( process.HasExited || log.ToString( ).Contains( "Unhandled exception", StringComparison.Ordinal ) )
+            {
+                Console.WriteLine( $"eng/aot: smoke FAILED: the process crashed\n{log}" );
+                return false;
+            }
+
+            return passed && await CheckAuthenticationAsync( http.BaseAddress!, process, start, log );
+        }
+        finally
+        {
+            if ( !process.HasExited )
+            {
+                process.Kill( entireProcessTree: true );
+            }
+
+            await process.WaitForExitAsync( );
+        }
+    }
+
+    /// <summary>Polls <c>/up</c>, the image's readiness contract, until it answers 200, the process exits, or the timeout.</summary>
+    private static async Task<bool> WaitUntilUpAsync( HttpClient http, Process process )
+    {
+        var deadline = Stopwatch.StartNew( );
+        while ( deadline.Elapsed < BootTimeout && !process.HasExited )
+        {
+            try
+            {
+                using var response = await http.GetAsync( new Uri( "/up", UriKind.Relative ) );
+                if ( response.StatusCode == HttpStatusCode.OK )
+                {
+                    return true;
+                }
+            }
+            catch ( HttpRequestException )
+            {
+                // Not listening yet.
+            }
+
+            await Task.Delay( TimeSpan.FromMilliseconds( 20 ) );
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> CheckAllAsync( HttpClient http, string publicDirectory )
+    {
+        var robots = await File.ReadAllBytesAsync( Path.Combine( publicDirectory, "robots.txt" ) );
+
+        (string Name, HttpMethod Method, string Path, HttpStatusCode Status, Func<HttpResponseMessage, byte[], bool> Expect)[] checks =
+        [
+            (
+                "native health",
+                HttpMethod.Get,
+                "/up",
+                HttpStatusCode.OK,
+                ( response, body ) => response.Content.Headers.ContentType?.MediaType == "text/plain" && body.AsSpan( ).SequenceEqual( "OK"u8 )
+            ),
+            ("HEAD on a GET route, no body (Rack::Head)", HttpMethod.Head, "/up", HttpStatusCode.OK, ( _, body ) => body.Length == 0),
+            (
+                "a file from public/ (ActionDispatch::Static)",
+                HttpMethod.Get,
+                "/robots.txt",
+                HttpStatusCode.OK,
+                ( _, body ) => body.AsSpan( ).SequenceEqual( robots )
+            ),
+            ("safe native unknown path", HttpMethod.Get, "/no-such-page", HttpStatusCode.NotFound, SafeNotFound),
+            ("retired mailbox route", HttpMethod.Post, "/rails/action_mailbox/postmark/inbound_emails", HttpStatusCode.NotFound, SafeNotFound),
+            ("unmapped settings route", HttpMethod.Get, "/rooms/1/settings", HttpStatusCode.NotFound, SafeNotFound),
+            (
+                "the data layer: no user yet, so sign-in redirects to the first run (ensure_user_exists)",
+                HttpMethod.Get,
+                "/session/new",
+                HttpStatusCode.Found,
+                ( response, _ ) => response.Headers.Location?.AbsolutePath == "/first_run"
+            ),
+        ];
+
+        var passed = true;
+        foreach ( var check in checks )
+        {
+            using var request = new HttpRequestMessage( check.Method, new Uri( check.Path, UriKind.Relative ) );
+            using var response = await http.SendAsync( request );
+            var body = await response.Content.ReadAsByteArrayAsync( );
+            var ok = response.StatusCode == check.Status && check.Expect( response, body );
+            var verdict = ok ? "ok  " : "FAIL";
+            Console.WriteLine(
+                $"eng/aot: smoke: {verdict} {check.Method} {check.Path} -> {( int ) response.StatusCode}, {body.Length} bytes: {check.Name}" );
+            passed &= ok;
+        }
+
+        return passed;
+    }
+
+    private static bool SafeNotFound( HttpResponseMessage response, byte[] body ) =>
+        response.Content.Headers.ContentType?.MediaType == "text/html" && body.Length > 0 &&
+        !Encoding.UTF8.GetString( body ).Contains( "StackTrace", StringComparison.Ordinal );
+
+    private static async Task<bool> CheckAuthenticationAsync( Uri address, Process original, ProcessStartInfo start, StringBuilder log )
+    {
+        var cookies = new CookieContainer( );
+        using var browser = new HttpClient( new SocketsHttpHandler { AllowAutoRedirect = false, CookieContainer = cookies } )
+        {
+            BaseAddress = address,
+            Timeout = TimeSpan.FromSeconds( 10 ),
+        };
+        var setup = await ReadSmokePageAsync( browser, "/first_run", "first-run form" );
+        if ( setup is null )
+        {
+            return false;
+        }
+
+        var fields = new Dictionary<string, string>( StringComparer.Ordinal )
+        {
+            ["user[name]"] = "Native Smoke User",
+            ["user[email_address]"] = "native-smoke@example.com",
+            ["user[password]"] = "native-smoke-password",
+        };
+        browser.DefaultRequestHeaders.Add( "Sec-Fetch-Site", "cross-site" );
+        using ( var missing = await browser.PostAsync( "/first_run", new FormUrlEncodedContent( fields ) ) )
+        {
+            if ( !ExpectStatus( "first-run hostile metadata", missing, HttpStatusCode.UnprocessableEntity ) )
+            {
+                return false;
+            }
+        }
+
+        browser.DefaultRequestHeaders.Remove( "Sec-Fetch-Site" );
+        browser.DefaultRequestHeaders.Add( "Sec-Fetch-Site", "same-origin" );
+        fields["authenticity_token"] = FormToken( setup );
+        if ( !HasEmptyCsrfFields( fields["authenticity_token"], cookies, address ) )
+        {
+            return false;
+        }
+
+        using ( var created = await browser.PostAsync( "/first_run", new FormUrlEncodedContent( fields ) ) )
+        {
+            if ( !HasNativeAuthCookie( created ) )
+            {
+                return false;
+            }
+        }
+
+        var profile = await ReadSmokePageAsync( browser, "/users/me/profile", "native profile" );
+        if ( profile is null )
+        {
+            return false;
+        }
+
+        if ( !profile.Contains( "Native Smoke User", StringComparison.Ordinal ) )
+        {
+            return false;
+        }
+
+        var avatar = Regex.Match( profile, "src=\"([^\"]+/avatar[^\"]*)\"", RegexOptions.CultureInvariant ).Groups[1].Value;
+        if ( avatar.Length == 0 )
+        {
+            throw new InvalidDataException( "Native smoke profile has no protected avatar URL." );
+        }
+
+        var originalCookie = cookies.GetCookieHeader( address );
+
+        original.Kill( entireProcessTree: true );
+        await original.WaitForExitAsync( );
+        using var restarted = Process.Start( start )!;
+        restarted.OutputDataReceived += ( _, line ) => Append( log, line.Data );
+        restarted.ErrorDataReceived += ( _, line ) => Append( log, line.Data );
+        restarted.BeginOutputReadLine( );
+        restarted.BeginErrorReadLine( );
+        try
+        {
+            if ( !await WaitUntilUpAsync( browser, restarted ) )
+            {
+                return false;
+            }
+
+            profile = await ReadSmokePageAsync( browser, "/users/me/profile", "native profile after restart" );
+            if ( profile is null )
+            {
+                return false;
+            }
+
+            if ( !profile.Contains( "Native Smoke User", StringComparison.Ordinal ) )
+            {
+                return false;
+            }
+
+            using ( var image = await browser.GetAsync( WebUtility.HtmlDecode( avatar ) ) )
+            {
+                if ( !ExpectStatus( "protected URL survives key-ring restart", image, HttpStatusCode.OK ) )
+                {
+                    return false;
+                }
+            }
+
+            using var hostile = new HttpRequestMessage( HttpMethod.Put, "/users/me/profile" )
+            {
+                Content = new FormUrlEncodedContent( [new( "user[name]", "Must Not Change" )] ),
+            };
+            hostile.Headers.Add( "Sec-Fetch-Site", "cross-site" );
+            using ( var missing = await browser.SendAsync( hostile ) )
+            {
+                if ( !ExpectStatus( "authenticated hostile metadata", missing, HttpStatusCode.UnprocessableEntity ) )
+                {
+                    return false;
+                }
+            }
+
+            using ( var logout = new HttpRequestMessage( HttpMethod.Delete, "/session" ) )
+            {
+                logout.Headers.Add( "X-CSRF-Token", FormToken( profile ) );
+                using var response = await browser.SendAsync( logout );
+                if ( !ExpectStatus( "native sign-out", response, HttpStatusCode.Found ) )
+                {
+                    return false;
+                }
+            }
+
+            using var replay = new HttpClient( new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false } ) { BaseAddress = address };
+            using var revoked = new HttpRequestMessage( HttpMethod.Get, "/users/me/profile" );
+            revoked.Headers.Add( "Cookie", originalCookie );
+            using var rejected = await replay.SendAsync( revoked );
+            return ExpectStatus( "revoked cookie cannot replay after sign-out", rejected, HttpStatusCode.Found )
+                && rejected.Headers.Location?.AbsolutePath == "/session/new";
+        }
+        finally
+        {
+            if ( !restarted.HasExited )
+            {
+                restarted.Kill( entireProcessTree: true );
+            }
+
+            await restarted.WaitForExitAsync( );
+        }
+    }
+
+    private static bool HasEmptyCsrfFields( string token, CookieContainer cookies, Uri address ) =>
+        token.Length == 0 && !cookies.GetCookieHeader( address ).Contains( ".Campfire.Csrf=", StringComparison.Ordinal );
+
+    private static bool HasNativeAuthCookie( HttpResponseMessage response ) =>
+        ExpectStatus( "native first-run cookie", response, HttpStatusCode.Found )
+        && response.Headers.TryGetValues( "Set-Cookie", out var values )
+        && values.Any( IsNativeAuthCookie );
+
+    /// <summary>The authentication cookie, HttpOnly and SameSite=Lax.</summary>
+    private static bool IsNativeAuthCookie( string setCookie ) =>
+        setCookie.StartsWith( ".Campfire.Auth=", StringComparison.Ordinal )
+        && setCookie.Contains( "httponly", StringComparison.OrdinalIgnoreCase )
+        && setCookie.Contains( "samesite=lax", StringComparison.OrdinalIgnoreCase );
+
+    private static async Task<string?> ReadSmokePageAsync( HttpClient browser, string path, string name )
+    {
+        using var response = await browser.GetAsync( path );
+        return ExpectStatus( name, response, HttpStatusCode.OK ) ? await response.Content.ReadAsStringAsync( ) : null;
+    }
+
+    private static string FormToken( string html )
+    {
+        var match = Regex.Match( html, "name=\"authenticity_token\" value=\"([^\"]*)\"", RegexOptions.CultureInvariant );
+        if ( !match.Success )
+        {
+            throw new InvalidDataException( "Native smoke form has no compatibility token field." );
+        }
+
+        return WebUtility.HtmlDecode( match.Groups[1].Value );
+    }
+
+    private static bool ExpectStatus( string name, HttpResponseMessage response, HttpStatusCode expected )
+    {
+        var passed = response.StatusCode == expected;
+        Console.WriteLine( $"eng/aot: smoke: {(passed ? "ok" : "FAIL")} {name}: {( int ) response.StatusCode}" );
+        return passed;
+    }
+
+    private static void Append( StringBuilder log, string? line )
+    {
+        if ( line is null )
+        {
+            return;
+        }
+
+        lock ( log )
+        {
+            log.AppendLine( line );
+        }
+    }
+
+    private static int FreePort( )
+    {
+        using var listener = new TcpListener( IPAddress.Loopback, 0 );
+        listener.Start( );
+
+        return (( IPEndPoint ) listener.LocalEndpoint).Port;
+    }
+}

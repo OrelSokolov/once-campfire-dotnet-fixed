@@ -1,0 +1,17 @@
+@inherits ViewSlice<BoostsPartial>
+@{ var message = Model.Message; }
+@TurboFrameTagOpen(DomIds.MessageBoostingFrame(message.ClientMessageId))
+  <div class="boosts flex flex-wrap align-center gap full-width" style="--column-gap: 0.4ch; --row-gap: 0"
+      data-controller="turbo-streaming" data-action="turbo:submit-start->turbo-streaming#unsubscribe">
+    <div class="flex-inline flex-wrap gap" id="@DomIds.MessageBoosts(message.ClientMessageId)" data-turbo-streaming-target="container">
+      @await Each(message.Boosts, RenderBoost)
+    </div>
+
+    @TurboFrameTagOpen(DomIds.MessageNewBoostFrame(message.ClientMessageId))
+      <div class="flex-inline message__boost-inline" data-controller="soft-keyboard">
+        @LinkToOpen(message.NewBoostPath, Attributes().Class("boost__action txt-small btn").Attribute("action", "soft-keyboard#open"))
+          @ImageTag(ViewContext, "boost.svg", Attributes().Size(20).AriaHidden())
+          <span class="for-screen-reader">Add a boost</span>
+</a>      </div>
+</turbo-frame>  </div>
+@{ WriteLiteral("</turbo-frame>"); }

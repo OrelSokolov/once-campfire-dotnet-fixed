@@ -1,0 +1,45 @@
+@inherits ViewSlice<AccountUserPartial>
+@{ var user = Model.User; }
+<li class="flex align-center gap margin-none @(user.Banned ? "banned" : "")">
+  <figure class="avatar flex-item-no-shrink" style="--avatar-size: 3.75ch;">
+    @AvatarTag(ViewContext, user, Attributes().Loading("lazy"))
+  </figure>
+
+  <div class="min-width">
+    <div class="overflow-ellipsis fill-shade"><strong>@user.Name</strong></div>
+  </div>
+
+  <hr class="separator" aria-hidden="true">
+
+  @if (ViewContext.CanAdminister && user.Active)
+  {
+      if (!user.IsBot)
+      {
+          var form = FormWith(ViewContext, Routes.AccountUser(user.Id)).Model(ParamNames.Users.Key).Data("controller", "form").Method("patch");
+          var roleId = TurboHelper.DomId("user", user.Id, "role");
+@:      @form.Open()
+        <label class="btn txt-small flex-item-no-shrink" for="@roleId">
+          <span class="for-screen-reader">Role: @(user.Administrator ? "Administrator" : "Member")</span>
+          @ImageTag(ViewContext, "crown.svg", Attributes().Size(20).AriaHidden())
+          @form.CheckBox(ParamNames.Users.Role, Attributes().Data("action", "form#submit").Hidden().Id(roleId).Disabled(ViewContext.IsCurrentUser(user.Id)), "administrator", "member", user.RoleName)
+        </label>
+          @Raw("</form>")
+      }
+@:
+      if (!ViewContext.IsCurrentUser(user.Id))
+      {
+          var button = ButtonTo(ViewContext, Routes.AccountUser(user.Id), Attributes().Method("delete").Class("btn txt-small flex-item-no-shrink btn--negative").Data("turbo_confirm", "Are you sure you want to permanently remove this person from the account? This can’t be undone."));
+@:      @button.Open
+@:        @ImageTag(ViewContext, "minus.svg", Attributes().Size(20).AriaHidden())
+        <span class="for-screen-reader">Delete @user.Name</span>
+          @button.Close
+      }
+  }
+  @if (ViewContext.IsCurrentUser(user.Id))
+  {
+@:    @LinkToOpen(Routes.UserProfile, Attributes().Class("btn txt-small flex-item-no-shrink").Target("_top"))
+@:      @ImageTag(ViewContext, "pencil.svg", Attributes().Size(20).AriaHidden())
+      <span class="for-screen-reader">My settings</span>
+      @Raw("</a>")
+  }
+</li>

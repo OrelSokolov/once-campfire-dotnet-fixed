@@ -1,0 +1,11 @@
+@inherits ViewSlice<HelpContactPartial>
+@if (Model.HelpContact is { } owner)
+{
+  <div class="txt-align-center margin-block-double full-width">
+    @LinkToOpen($"mailto:\"{owner.Name}\" <{owner.EmailAddress}>", Attributes().Class("btn center").Title($"Email {owner.Name}"))
+      @ImageTag(ViewContext, "lifebuoy.svg", Attributes().AriaHidden())
+      <span>@owner.EmailAddress</span>
+@Raw("</a>")
+    <div class="txt-align-center center margin-block txt-subtle">Campfire&trade; version @VersionBadge(ViewContext)</div>
+  </div>
+}

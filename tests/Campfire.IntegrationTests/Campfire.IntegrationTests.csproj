@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Rails fixtures (reference/test/fixtures) and the raw cable client, shared with the other suites. -->
+    <Compile Include="..\Campfire.Application.Tests\Fixtures\FixtureErb.cs" Link="Linked\Fixtures\FixtureErb.cs" />
+    <Compile Include="..\Campfire.Application.Tests\Fixtures\FixtureRows.cs" Link="Linked\Fixtures\FixtureRows.cs" />
+    <Compile Include="..\Campfire.Application.Tests\Fixtures\FixtureYaml.cs" Link="Linked\Fixtures\FixtureYaml.cs" />
+    <Compile Include="..\Campfire.Application.Tests\Fixtures\LoadedFixtures.cs" Link="Linked\Fixtures\LoadedFixtures.cs" />
+    <Compile Include="..\Campfire.Application.Tests\Fixtures\RailsFixtures.cs" Link="Linked\Fixtures\RailsFixtures.cs" />
+    <Compile Include="..\Campfire.Application.Tests\Fixtures\YamlScalar.cs" Link="Linked\Fixtures\YamlScalar.cs" />
+    <Compile Include="..\Campfire.Web.Tests\Cable\Support\CableTestClient.cs" Link="Linked\Cable\CableTestClient.cs" />
+    <Compile Include="..\Campfire.Web.Tests\Cable\Support\ReceivedFrame.cs" Link="Linked\Cable\ReceivedFrame.cs" />
+    <Compile Include="..\Campfire.Web.Tests\Cable\Support\RawHttp.cs" Link="Linked\Cable\RawHttp.cs" />
+    <Compile Include="..\Campfire.Web.Tests\Cable\Support\RawHttpResponse.cs" Link="Linked\Cable\RawHttpResponse.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Repository paths and JSON vector reads, shared by every test project. -->
+    <Compile Include="..\Shared\**\*.cs" Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Using Include="Campfire.Tests.Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Campfire.Web\Campfire.Web.csproj" />
+  </ItemGroup>
+
+</Project>

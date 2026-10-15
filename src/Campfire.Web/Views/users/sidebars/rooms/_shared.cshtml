@@ -1,0 +1,6 @@
+@inherits ViewSlice<SidebarSharedPartial>
+@{ var room = Model.Room; }
+@LinkToRoomOpen(room.Id, Attributes().Id(DomIds.RoomListItem(room.Kind, room.Id)).Data("sorted_list_name", room.Name).Style("--column-gap: 0.5em")
+    .Class(TokenList(("align-center gap room btn txt-nowrap", true), ("unread", room.Unread))))
+  <span class="overflow-ellipsis">@room.Name</span>
+@{ WriteLiteral("</a>"); }

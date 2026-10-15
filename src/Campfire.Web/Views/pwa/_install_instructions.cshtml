@@ -1,0 +1,61 @@
+@inherits ViewSlice<ContextPartial>
+@{ var platform = ViewContext.Platform; }
+@if (!(platform.Chrome || platform is { Firefox: true, Android: false }))
+{
+  <details class="notifications-help pwa__instructions hide-in-pwa" data-controller="pwa-install" data-pwa-install-prompting-class="pwa--can-install" data-notifications-target="details">
+    <summary class="btn">
+      @ImageTag(ViewContext, "external/install.svg", Attributes().AriaHidden().Size(20))
+      <strong>Install Campfire as a web app.</strong>
+      @ImageTag(ViewContext, "disclosure.svg", Attributes().AriaHidden().Size(10).Class("disclosure"))
+    </summary>
+
+    @if (platform.Edge)
+    {
+        <ol>
+          <li>Click <em>@ImageTag(ViewContext, "install-edge.svg", Attributes().Alt("the app available - install Campfire chat button").Size(16))</em>in the address bar.</li>
+          <li>Click <em>Install</em>.</li>
+        </ol>
+    }
+    else if (platform is { Chrome: true, Android: true })
+    {
+        <ol>
+          <li>Tap the <em>@ImageTag(ViewContext, "menu-dots-vertical.svg", Attributes().Alt("More options").Size(16))</em> menu button.</li>
+          <li>Tap <em>Install app</em> in the menu.</li>
+        </ol>
+    }
+    else if (platform is { Firefox: true, Android: true })
+    {
+        <ol>
+          <li>Tap the <em>@ImageTag(ViewContext, "menu-dots-vertical.svg", Attributes().Alt("More options").Size(16))</em> menu button.</li>
+          <li>Tap <em>Install</em> in the menu.</li>
+        </ol>
+    }
+    else if (platform is { Safari: true, Desktop: true })
+    {
+        <ol>
+          <li>Click <em>File</em> in the top left.</li>
+          <li>Click <em>Add to Dock…</em>.</li>
+        </ol>
+    }
+    else if ((platform.Safari || platform.Chrome) && platform.Ios)
+    {
+        <p>To receive push notifications in @RubyText.Capitalize(platform.Browser) for @platform.OperatingSystem, you must install Campfire as a web app.</p>
+        <ol>
+          <li>Tap <em>@ImageTag(ViewContext, "external/share.svg", Attributes().Alt("the share button").Size(20))</em></li>
+          <li>Tap <em>Add to Home Screen</em>.</li>
+        </ol>
+    }
+    else
+    {
+        <p>Some platforms require you to install Campfire as a web app to receive push notifications.</p>
+    }
+
+    <div class="margin-block-start txt-align-center pwa__installer">
+      <hr class="separator margin-block">
+      <button class="btn btn--reversed center" data-action="pwa-install#promptInstall">
+        @ImageTag(ViewContext, "external/install.svg", Attributes().AriaHidden())
+        Install now
+      </button>
+    </div>
+  </details>
+}

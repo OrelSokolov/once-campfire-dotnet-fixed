@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Digest of every built parity seed, to show that rebuilding a seed gives the same bytes.
+#
+#   eng/oracle/seed-digest [SEED_DIR]            one line per seed: dump, storage tree, labels
+#   eng/oracle/seed-digest --detail SEED_DIR NAME  the dump and the tree listing, for diffing
+#
+# SEED_DIR defaults to PARITY_SEED_DIR, then parity/.seed. The database digest is the SHA-256 of
+# `sqlite3 .dump` (the host's sqlite3; rows in rowid order, so the dump is only as stable as the
+# rows are). The storage digest is the SHA-256 of the sorted "sha256  relative path" listing of
+# every file under storage/, so it covers names, contents and layout. labels.json is hashed as is.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+
+dump() { sqlite3 -bail "$1/db/production.sqlite3" .dump; }
+tree() { (cd "$1/storage" && find . -type f -printf '%P\n' | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done); }
+
+if [ "${1:-}" = --detail ]; then
+  dir=$2/$3
+  echo "## sqlite3 .dump"; dump "$dir"
+  echo "## storage tree"; tree "$dir"
+  exit 0
+fi
+
+seeds=${1:-${PARITY_SEED_DIR:-$ROOT/parity/.seed}}
+command -v sqlite3 >/dev/null || { echo "seed-digest: needs the sqlite3 CLI" >&2; exit 1; }
+echo "# sqlite3 $(sqlite3 --version | cut -d' ' -f1); columns: seed, dump sha256, storage files, storage sha256, labels sha256"
+for dir in "$seeds"/*/; do
+  name=$(basename "$dir")
+  [ -f "$dir/db/production.sqlite3" ] || continue
+  printf '%s %s %s %s %s\n' "$name" \
+    "$(dump "$dir" | sha256sum | cut -c1-64)" \
+    "$(find "$dir/storage" -type f | wc -l)" \
+    "$(tree "$dir" | sha256sum | cut -c1-64)" \
+    "$(sha256sum < "$dir/labels.json" | cut -c1-64)"
+done

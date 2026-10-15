@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net11.0": {
+      "Microsoft.Diagnostics.Tracing.TraceEvent": {
+        "type": "Direct",
+        "requested": "[3.2.5, )",
+        "resolved": "3.2.5",
+        "contentHash": "dVHew6DC1WpSrG2fUKg8bLvhr5/9mug41MJtcws4fKLJ4V9Kd2610PYg0mFd837YvJwvwWTYQlGBbWvRZHs2mg==",
+        "dependencies": {
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.510501"
+        }
+      },
+      "Microsoft.DotNet.ILCompiler": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.2.26504.105, )",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "6yeR3nENReUAbLaOEeX3krUEYCr3ufnbXRnYS3IvM2piBTwKcaA3pzhI2D8XZhj514zX+lU0P/8M04ZrFwTT7w=="
+      },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.2.26504.105, )",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "Mkb6kHfPr4/txc4n/41yUiEBT44Haup2qnyecIO1ADo2QB4YxleZHsOvgYJT6roL1SNuFSpbeNpoe70BJ953Uw=="
+      },
+      "Microsoft.Diagnostics.NETCore.Client": {
+        "type": "Transitive",
+        "resolved": "0.2.510501",
+        "contentHash": "juoqJYMDs+lRrrZyOkXXMImJHneCF23cuvO4waFRd2Ds7j+ZuGIPbJm0Y/zz34BdeaGiiwGWraMUlln05W1PCQ==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging": "6.0.0"
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "Transitive",
+        "resolved": "6.0.0",
+        "contentHash": "k6PWQMuoBDGGHOQTtyois2u4AwyVcIwL2LaSLlTZQm2CYcJ1pxbt6jfAnpWmzENA/wfrYRI/X9DTLoUkE4AsLw=="
+      },
+      "Microsoft.Extensions.Logging": {
+        "type": "Transitive",
+        "resolved": "6.0.0",
+        "contentHash": "eIbyj40QDg1NDz0HBW0S5f3wrLVnKWnDJ/JtZ+yJDFnDj90VoPuoPmFkeaXrtu+0cKm5GRAwoDf+dBWXK0TUdg==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "6.0.0"
+        }
+      }
+    },
+    "net11.0/linux-x64": {
+      "Microsoft.DotNet.ILCompiler": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.2.26504.105, )",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "6yeR3nENReUAbLaOEeX3krUEYCr3ufnbXRnYS3IvM2piBTwKcaA3pzhI2D8XZhj514zX+lU0P/8M04ZrFwTT7w==",
+        "dependencies": {
+          "runtime.linux-x64.Microsoft.DotNet.ILCompiler": "11.0.0-rc.2.26504.105"
+        }
+      },
+      "runtime.linux-x64.Microsoft.DotNet.ILCompiler": {
+        "type": "Transitive",
+        "resolved": "11.0.0-rc.2.26504.105",
+        "contentHash": "YDzqUCYjkf2XzSukeMlOa0X3cdiRZAau0vN4axKSLYpaL1IyvDtafqaeFmkA3FPJIiso+RkjwUG/GG4g2bKUVw=="
+      }
+    }
+  }
+}

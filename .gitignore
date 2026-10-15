@@ -1,0 +1,42 @@
+# .NET and local IDE output
+**/bin/
+# ...but these hold scripts, not build output.
+!/bin/
+!parity/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+artifacts/
+
+# Local data, secrets, and reference worktrees
+.env
+.env.*
+!.env.example
+# Test-only secrets the parity harness and vectors are generated with (imported from Rust).
+!parity/.env.reference
+appsettings.Local.json
+/storage/
+tmp/
+.references/
+
+# Browser tooling and generated evidence
+node_modules/
+parity/.seed/
+parity/out/
+playwright-report/
+test-results/
+bench/work/
+
+# Local worktrees and test output
+/AGENTS.md
+.claude/
+target/
+
+# Local guidance and generated inventories
+/.editorconfig
+/plans/
+/docs/inventory/
+/bench/results/

@@ -1,0 +1,91 @@
+@inherits PageSlice<UsersShowPage>
+@{ var user = Model.User; }
+
+
+<section class="panel txt-align-center">
+  <div class="flex flex-column gap @(user.Banned ? "banned" : "")">
+    <div class="avatar txt-xx-large center" style="background: white">
+      @ImageTag(ViewContext, user.AvatarPath, Attributes().Alt("Profile avatar").Class("avatar"))
+    </div>
+
+    @if (user.IsBot)
+    {
+      <div class="pad-double--inline push--inline push--block-start">
+        @if (user.Active)
+        {
+@:          @ButtonToDirectRoomWith(ViewContext, user.Id)
+        }
+        else
+        {
+          <div>@user.Name is no longer on this account</div>
+        }
+      </div>
+    }
+    else if (!user.Deactivated)
+    {
+        <div class="flex flex-column gap" style="--row-gap: calc(var(--block-space) / 3)">
+          <h1 class="txt-x-large txt-tight-lines margin-none">@user.Name</h1>
+          @if (ViewContext.CanAdminister)
+          {
+            <div>@MailTo(user.EmailAddress)</div>
+          }
+          <div>@user.Bio</div>
+        </div>
+@:
+        if (user.Active)
+        {
+            var directButton = ButtonTo(ViewContext, Routes.RoomsDirectsWithUsers([user.Id]), Attributes().Class("btn btn--reversed full-width txt-large"));
+          <div class="pad-inline-double margin-inline margin-block-start">
+            @directButton.Open
+              @ImageTag(ViewContext, "messages.svg", Attributes().Aria("hidden", "true").Aria("label", $"Ping {user.Name}"))
+@directButton.Close          </div>
+@:
+            if (ViewContext.CanAdminister)
+            {
+            <hr class="margin-block-start borderless">
+@:
+@:            @await Partial(Views.users.profiles._transfer.Create(new TransferPartial(ViewContext, user, Model.TransferId)))
+            }
+        }
+@:
+        if (ViewContext.CanAdminister && !ViewContext.IsCurrentUser(user.Id))
+        {
+          <div class="margin-block-start">
+            @await Partial(Views.users._ban_button.Create(new BanButtonPartial(ViewContext, user)))
+          </div>
+        }
+    }
+    else
+    {
+        <div>
+          <h1 class="txt-x-large margin-none">@user.Name</h1>
+          <div>@user.Name is no longer on this account</div>
+        </div>
+    }
+  </div>
+</section>
+@functions {
+    protected override string? PageTitle => Model.User.Name;
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBack(ViewContext)
+  </div>
+@:
+  <div class="flex align-center gap flex-item-justify-end">
+    @if (ViewContext.IsCurrentUser(Model.User.Id))
+    {
+@:      @LinkToOpen(Routes.UserProfile, Attributes().Class("btn"))
+@:        @ImageTag(ViewContext, "pencil.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Edit my profile</span>
+        @Raw("</a>")
+    }
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

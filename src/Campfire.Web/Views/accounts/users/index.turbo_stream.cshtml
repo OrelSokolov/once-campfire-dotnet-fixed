@@ -1,0 +1,9 @@
+@inherits ViewSlice<AccountUsersTurboStreamPage>
+@TurboStreamOpen(TurboStreamActions.Replace, DomIds.NextPageContainer)@(await Each(
+    Model.Users,
+    user => Partial(Views.accounts.users._user.Create(new AccountUserPartial(ViewContext, user)))))@TurboStreamClose()
+
+@if (Model.NextPage is { } page)
+{
+@:  @TurboStreamOpen(TurboStreamActions.Append, DomIds.AccountUsers)@(await Partial(Views.accounts.users._next_page_container.Create(new NextPageContainerPartial(ViewContext, page))))@TurboStreamClose()
+}

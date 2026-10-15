@@ -1,0 +1,62 @@
+@inherits PageSlice<FirstRunPage>
+@{ var form = FormWith(ViewContext, Routes.FirstRun).Model(ParamNames.Users.Key).Class("center max-width").Multipart(); }
+
+@form.Open()
+  <section class="nametag u-relative">
+    <div class="flex justify-center align-center pad-block">
+      @ImageTag(ViewContext, "lanyard.svg", Attributes().Class("nametag__lanyard").AriaHidden())
+    </div>
+
+    <div class="nametag__inner flex flex-column gap">
+      <fieldset class="flex flex-column center-block">
+        <legend class="txt-large txt-align-center"><strong>@PageTitle</strong></legend>
+
+        <label class="align-center center avatar__form gap" data-controller="upload-preview">
+          <div class="btn input--file">
+            @ImageTag(ViewContext, "camera.svg", Attributes().AriaHidden())
+            @form.FileField(ParamNames.Users.Avatar, Attributes().Class("input").Accept("image/*").Data("upload_preview_target", "input").Data("action", "upload-preview#previewImage"))
+            <span class="for-screen-reader">Add your avatar</span>
+          </div>
+
+          <div class="btn avatar input--file txt-xx-large">
+            @ImageTag(ViewContext, "default-avatar.svg", Attributes().AriaHidden().Data("upload_preview_target", "image").Alt("Add your avatar"))
+            <span class="for-screen-reader">Avatar</span>
+          </div>
+        </label>
+      </fieldset>
+
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "user_name")
+        <label class="flex align-center gap flex-item-grow txt-large input input--actor">
+          @form.TextField(ParamNames.Users.Name, null, Attributes().Class("input").Autocomplete("name").Placeholder("Name").Autofocus().Required().Data("1p-ignore", true))
+          @ImageTag(ViewContext, "person.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "email_address")
+        <label class="flex align-center gap flex-item-grow txt-large input input--actor">
+          @form.EmailField(ParamNames.Users.EmailAddress, null, Attributes().Class("input").Autocomplete("username").Placeholder("Email address").Required())
+          @ImageTag(ViewContext, "email.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "password")
+        <label class="flex align-center gap flex-item-grow txt-large input input--actor">
+          @form.PasswordField(ParamNames.Users.Password, Attributes().Class("input").Autocomplete("new-password").Placeholder("Password").Required().Maxlength(72))
+          @ImageTag(ViewContext, "password.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      @form.ButtonOpen(Attributes().Class("btn btn--reversed center txt-large").Type("submit"))
+        @ImageTag(ViewContext, "arrow-right.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Save</span>
+</button>    </div>
+  </section>
+@{ WriteLiteral("</form>"); }
+@functions {
+    protected override string? PageTitle => "Set up Campfire";
+
+    protected override string? BodyClass => "signup";
+}

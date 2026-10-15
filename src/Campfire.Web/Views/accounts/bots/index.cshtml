@@ -1,0 +1,39 @@
+@inherits PageSlice<BotsIndexPage>
+
+
+<section class="panel panel--wide txt-align-center flex flex-column position-relative" style="view-transition-name: chat-bots">
+  <div class="flex align-center gap">
+    <div class="panel__button">
+      @TranslationButton(ViewContext, "chat_bots")
+    </div>
+    <div class="pad-inline-double center">
+      <h1 class="margin-none">Chat bots</h1>
+      <p class="margin-none-block-start">With Chat bots, other sites and services can post updates directly to Campfire.</p>
+
+      @LinkToOpen(Routes.NewAccountBot, Attributes().Class("btn btn--reversed txt-large").Aria("label", "Add a chat bot"))
+        @ImageTag(ViewContext, "bot.svg", Attributes().AriaHidden().Size(20))
+        @ImageTag(ViewContext, "add.svg", Attributes().AriaHidden().Size(20))
+</a>    </div>
+  </div>
+
+  <div class="pad-inline pad-block-start ">
+    <menu class="flex flex-column gap margin-none pad">
+      @await Each(Model.Bots, bot => Partial(Views.accounts.bots._bot.Create(new BotPartial(ViewContext, bot))))
+    </menu>
+  </div>
+</section>
+@functions {
+    protected override string? PageTitle => "Chat bots";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackTo(ViewContext, Routes.EditAccount)
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

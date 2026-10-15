@@ -1,0 +1,825 @@
+#!/usr/bin/env bash
+# Benchmark the reference (Rails) app against the Rust port on the same seed and CPUs.
+#
+#   bench/run [--apps reference,rust[,rust-identity]] [--reps 3] [--out DIR]
+#   bench/report DIR            # median + spread table from a results dir
+#
+# Each rep, for each app in turn (never two at once; the order alternates between reps): a fresh
+# copy of parity/.seed/default, a fresh container pinned to SERVER_CPUS, then cold start, idle
+# memory, the HTTP suite, the Action Cable fan-out suite and the upload suite, with container
+# memory sampled throughout and each process's memory, by role, during the fan-out
+# (bench/lib/procmem.py). The load generator (bench/loadgen) runs pinned to LOADGEN_CPUS. Before
+# each app's run it waits (up to LOAD_WAIT_SECS) for the 1-minute load average to drop below
+# LOAD_MAX, and records it.
+#
+# `rust-identity` is the Rust image again, running only the HTTP suite with
+# `Accept-Encoding: identity`: the app's cost without gzip.
+#
+# PATCH (the .NET port's benchmark, plan v3 section 10, docs/benchmarks.md): an app is a target and variants,
+#   TARGET[-listener][-identity][-index][-counters]
+# with TARGET one of reference, rust (RUST_IMAGE), rust-v0.1.1 (RUST_V011_IMAGE, the published release, diverged
+# from Rails), dotnet, dotnet-aot, dotnet-jit:
+#   -identity  the HTTP suite only, with `Accept-Encoding: identity` (what rust-identity always was, for any target)
+#   -listener  every request goes to the app's own listener on TARGET_PORT (PORT+1: Puma, Kestrel, or the Rust app
+#              without its front server) instead of the container's front server on PORT (host networking only)
+#   -index     Rust's extra index (index_messages_on_room_id_and_created_at) is created in this run's copy of the
+#              seed before the app starts; the seed and the app's schema stay as they are
+#   -counters  .NET only: EventPipe (DOTNET_EnableEventPipe) records COUNTERS_CONFIG to raw/<app>-<rep>/; the same
+#              app without -counters in the same run gives the overhead
+# The run records every target's identity (identity.json: image ID, revision, version, and for .NET the build and
+# runtime settings) and, for .NET apps, the GC threads the process runs; the load generator validates every
+# response and cable delivery, and bench/report counts errors and mismatches for every run.
+#
+# Images (unmodified production images, not the parity ones: no libfaketime, no pinned cable pool,
+# the reference's own resque-pool.yml):
+#   REFERENCE_IMAGE  campfire-reference:app   (parity/bin/reference build, or bench/images)
+#   RUST_IMAGE       campfire-rust:app        (parity/bin/candidate build, from /Dockerfile; bench/images tags campfire-rust:3fe9f61)
+#   RUST_MAIN_IMAGE  explicit immutable image ID for pinned Rust main (rust-main target)
+#   C_IMAGE          explicit immutable image ID for the pinned C port (c target)
+#   RUST_V011_IMAGE  campfire-rust:v0.1.1     (PATCH: bench/images; --apps rust-v0.1.1)
+#   DOTNET_IMAGE     campfire-dotnet:app      (PATCH: the .NET port's /Dockerfile; --apps reference,dotnet)
+#   DOTNET_AOT_IMAGE campfire-dotnet:aot      (PATCH: /Dockerfile's default `aot` stage, Native AOT; --apps dotnet-aot)
+#   DOTNET_JIT_IMAGE campfire-dotnet:jit      (PATCH: /Dockerfile's `jit` stage, the same code on the runtime; --apps dotnet-jit)
+#
+# Knobs (env): SERVER_CPUS=8-11 LOADGEN_CPUS=12-15 HTTP_SECS=8 HTTP_CONCS="1 16 64"
+#   CABLE_CLIENTS="100 500 1000" CABLE_TPUT_SECS=15 CABLE_POSTERS=4 UPLOAD_REPS=5 PORT=4390
+# The apps run with --network host: PORT and PORT+1 (and REDIS_PORT, for the reference's Redis) must be
+# free on the host. NETWORK=bridge measures as the preliminary run did instead: the container on
+# Docker's bridge, reached through a published port (docker-proxy), with no DNS resolver.
+#   LOAD_MAX=1.5 LOAD_WAIT_SECS=900 PROCMEM_CPUS=0 SUITES="http cable upload"
+# PATCH knobs: SEED_NAME=default (a seed under PARITY_SEED_DIR, e.g. long-room) ROOM_LABEL=rooms.watercooler
+#   WRITE_ROOM_LABEL=rooms.hq BEFORE_LABEL=messages.busy_060 HTTP_ROUTES (default: all eight)
+#   WARMUP_SECS=2 WARMUP_CONC=4 (per route, before its measured runs) VALIDATE_EVERY=1 (decode and search every Nth
+#   body per connection) CABLE_LATENCY_MSGS=30 REDIS_PORT=PORT+2 CONTAINER_NOFILE=65536 (the containers'
+#   RLIMIT_NOFILE) CONTAINER_PREFIX=bench-campfire BENCH_OWNER (a container label) DOTNET_EXTRA_ENV (like
+#   RUST_EXTRA_ENV) COUNTERS_CONFIG (-counters' EventPipe providers) COUNTERS_STREAMING (0/1) UPLOAD_FILE
+#   CABLE_DEFLATE=0/1 offers permessage-deflate; results record actual negotiation and wire frames.
+#   USER_AGENT optionally sets the same validated header for readiness and every loadgen request.
+#   SUITES=fill FILL_MESSAGES=N FILL_OUT=DIR FILL_CONC=16: post N messages into ROOM, stop the app cleanly and copy
+#   its storage to FILL_OUT (bench/long-room-seed builds the long-room seed with it)
+set -euo pipefail
+
+# A debug run is useful for diagnosis, but must never enter the timing queue.
+if [ -n "${LOADGEN_DEBUG:-}" ]; then
+  echo "bench/run: LOADGEN_DEBUG must be unset or empty for measurements" >&2
+  exit 2
+fi
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+BENCH=$ROOT/bench
+SEED_NAME=${SEED_NAME:-default} # PATCH: seed variants (the long room)
+SEED=${PARITY_SEED_DIR:-$ROOT/parity/.seed}/$SEED_NAME # PATCH: PARITY_SEED_DIR, as parity/bin/seed writes it
+LABELS=$SEED/labels.json
+ENV_FILE=$ROOT/parity/.env.reference
+
+REFERENCE_IMAGE=${REFERENCE_IMAGE:-campfire-reference:app}
+RUST_IMAGE=${RUST_IMAGE:-campfire-rust:app}
+RUST_MAIN_IMAGE=${RUST_MAIN_IMAGE:-}
+C_IMAGE=${C_IMAGE:-}
+C_EXTRA_ENV=${C_EXTRA_ENV-}
+PACED_WRITER_RATE=${PACED_WRITER_RATE:-0}
+RESPONSE_CACHE_PROFILE=${RESPONSE_CACHE_PROFILE:-ordinary}
+case "$RESPONSE_CACHE_PROFILE" in ordinary|distinct|freshness) ;; *) echo 'Invalid RESPONSE_CACHE_PROFILE' >&2; exit 2 ;; esac
+RESPONSE_CACHE_LOAD_BIN=${RESPONSE_CACHE_LOAD_BIN:-$ROOT/target/bench/response-cache-load/ResponseCacheLoad}
+CAPTURE_RESPONSE_CACHE_METRICS=${CAPTURE_RESPONSE_CACHE_METRICS:-0}
+[[ "$PACED_WRITER_RATE" =~ ^[0-9]+$ ]] && [ "$PACED_WRITER_RATE" -le 1000 ] || { echo 'PACED_WRITER_RATE must be an integer from 0 to 1000' >&2; exit 2; }
+CABLE_DEFLATE=${CABLE_DEFLATE:-0}
+BENCH_LAST_ROOM_COOKIE=${BENCH_LAST_ROOM_COOKIE:-0}
+case "$BENCH_LAST_ROOM_COOKIE" in 0|1) ;; *) echo "BENCH_LAST_ROOM_COOKIE must be 0 or 1" >&2; exit 2 ;; esac
+USER_AGENT=${USER_AGENT:-}
+case "$CABLE_DEFLATE" in 0|1) ;; *) echo "CABLE_DEFLATE must be 0 or 1" >&2; exit 2 ;; esac
+[[ "$USER_AGENT" != *$'\r'* && "$USER_AGENT" != *$'\n'* ]] || { echo "Invalid User-Agent" >&2; exit 2; }
+CURL_USER_AGENT=(); [ -z "$USER_AGENT" ] || CURL_USER_AGENT=(--user-agent "$USER_AGENT")
+RUST_V011_IMAGE=${RUST_V011_IMAGE:-campfire-rust:v0.1.1} # PATCH: the published Rust release
+DOTNET_IMAGE=${DOTNET_IMAGE:-campfire-dotnet:app} # PATCH: the .NET port, one process like the Rust app
+DOTNET_AOT_IMAGE=${DOTNET_AOT_IMAGE:-campfire-dotnet:aot} # PATCH: the two builds of the .NET port, measured as
+DOTNET_JIT_IMAGE=${DOTNET_JIT_IMAGE:-campfire-dotnet:jit} # separate apps (docs/native-aot.md)
+SERVER_CPUS=${SERVER_CPUS:-8-11}
+LOADGEN_CPUS=${LOADGEN_CPUS:-12-15}
+HTTP_SECS=${HTTP_SECS:-8}
+HTTP_CONCS=${HTTP_CONCS:-1 16 64}
+CABLE_CLIENTS=${CABLE_CLIENTS:-100 500 1000}
+CABLE_TPUT_SECS=${CABLE_TPUT_SECS:-15}
+CABLE_POSTERS=${CABLE_POSTERS:-4}
+UPLOAD_REPS=${UPLOAD_REPS:-5}
+PORT=${PORT:-4390}
+NETWORK=${NETWORK:-host}
+LOAD_MAX=${LOAD_MAX:-1.5}
+LOAD_WAIT_SECS=${LOAD_WAIT_SECS:-900}
+PROCMEM_CPUS=${PROCMEM_CPUS:-0}
+SUITES=${SUITES:-http cable upload}
+suite() { [[ " $SUITES " = *" $1 "* ]]; }
+# Extra environment for the Rust container only (space-separated K=V). The preliminary run
+# (results/prelim-20260926) used RAILS_MAX_THREADS=128 to dodge a writer/reader-pool deadlock that
+# 1c22a94 fixed; the app now runs as configured.
+RUST_EXTRA_ENV=${RUST_EXTRA_ENV-}
+# PATCH: the knobs the .NET port's benchmark adds (see the header).
+DOTNET_EXTRA_ENV=${DOTNET_EXTRA_ENV-}
+ROOM_LABEL=${ROOM_LABEL:-rooms.watercooler}
+WRITE_ROOM_LABEL=${WRITE_ROOM_LABEL:-rooms.hq}
+BEFORE_LABEL=${BEFORE_LABEL:-messages.busy_060}
+ALL_ROUTES="room_show messages_page sidebar search avatar static_css up post_message"
+HTTP_ROUTES=${HTTP_ROUTES:-$ALL_ROUTES}
+WARMUP_SECS=${WARMUP_SECS:-2}
+WARMUP_CONC=${WARMUP_CONC:-4}
+VALIDATE_EVERY=${VALIDATE_EVERY:-1}
+CABLE_LATENCY_MSGS=${CABLE_LATENCY_MSGS:-30}
+REDIS_PORT=${REDIS_PORT:-$((PORT + 2))}
+CONTAINER_NOFILE=${CONTAINER_NOFILE:-65536}
+CONTAINER_PREFIX=${CONTAINER_PREFIX:-bench-campfire}
+BENCH_OWNER=${BENCH_OWNER:-${CLAUDE_CODE_SESSION_ID:-$(id -un)}}
+COUNTERS_CONFIG=${COUNTERS_CONFIG:-Microsoft-Windows-DotNETRuntime:0x1:5,System.Runtime:0:4:EventCounterIntervalSec=1}
+COUNTERS_BUFFER_MB=${COUNTERS_BUFFER_MB:-400} # hexadecimal: 0x400 = 1024 MB; counter variants only
+COUNTERS_STREAMING=${COUNTERS_STREAMING:-1} # PATCH: 0 buffers until shutdown; 1 streams during the workload.
+case "$COUNTERS_STREAMING" in 0|1) ;; *) echo "COUNTERS_STREAMING must be 0 or 1" >&2; exit 2 ;; esac
+UPLOAD_FILE=${UPLOAD_FILE:-$ROOT/reference/test/fixtures/files/black_hole.jpg}
+FILL_MESSAGES=${FILL_MESSAGES:-0}
+FILL_OUT=${FILL_OUT:-}
+FILL_CONC=${FILL_CONC:-16}
+BASE=http://127.0.0.1:$PORT
+LOADGEN=$ROOT/target/bench/release/loadgen
+
+APPS=reference,rust REPS=3 OUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apps) APPS=$2; shift 2 ;;
+    --reps) REPS=$2; shift 2 ;;
+    --out)  OUT=$2; shift 2 ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac
+done
+OUT=${OUT:-$BENCH/results/$(date +%Y%m%d-%H%M%S)}
+mkdir -p "$OUT"
+WORK=$BENCH/.work
+CONTAINER=$CONTAINER_PREFIX-$PORT # PATCH: CONTAINER_PREFIX (was bench-campfire)
+
+log() { echo "[$(date +%T)] $*" >&2; }
+label() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$LABELS" "$1"; }
+lg() {
+  local shared=(); [ -z "$USER_AGENT" ] || shared=(--user-agent "$USER_AGENT")
+  if [ "$1" = http ] && [ "$RESPONSE_CACHE_PROFILE" != ordinary ]; then
+    [[ " $* " = *' --server-cgroup '* ]] || shared+=(--server-cgroup "$RESPONSE_CACHE_CGROUP")
+    [ "$RESPONSE_CACHE_PROFILE" != distinct ] || shared+=(--users "$RESPONSE_CACHE_USERS")
+    [ "$RESPONSE_CACHE_PROFILE" != freshness ] || shared+=(--post-room "$ROOM")
+    mkdir -p "$OUT/raw/$ACTIVE_APP-$ACTIVE_REP"
+    shared+=(--out "$OUT/raw/$ACTIVE_APP-$ACTIVE_REP/http-profile-$(date +%s%N).json")
+    taskset -c "$LOADGEN_CPUS" "$RESPONSE_CACHE_LOAD_BIN" "$@" "${shared[@]}"
+  else
+    taskset -c "$LOADGEN_CPUS" "$LOADGEN" "$@" "${shared[@]}"
+  fi
+}
+
+# PATCH: an app's target and variants (see the header).
+app_mods() {
+  local a=$1 mods=""
+  while :; do
+    case "$a" in
+      *-identity|*-listener|*-index|*-counters) mods="$mods ${a##*-}"; a=${a%-*} ;;
+      *) break ;;
+    esac
+  done
+  echo "$mods"
+}
+base_app() { local a=$1; for _ in $(app_mods "$1"); do a=${a%-*}; done; echo "$a"; }
+has_mod() { [[ " $(app_mods "$1") " = *" $2 "* ]]; }
+app_url() { if has_mod "$1" listener; then echo "http://127.0.0.1:$((PORT + 1))"; else echo "$BASE"; fi; }
+
+teardown() {
+  local status=${1:-0} # PATCH: preserve failed attempts before removing the container.
+  if [ -n "${PACED_WRITER:-}" ]; then kill "$PACED_WRITER" 2>/dev/null || true; wait "$PACED_WRITER" 2>/dev/null || true; PACED_WRITER=""; fi
+  [ -n "${SAMPLER:-}" ] && kill "$SAMPLER" 2>/dev/null || true
+  [ -n "${PROCMEM:-}" ] && kill "$PROCMEM" 2>/dev/null || true
+  if [ "$status" != 0 ] && [ -n "${ACTIVE_APP:-}" ]; then
+    local saved=$OUT/failed/$ACTIVE_APP-$ACTIVE_REP-$(date +%Y%m%dT%H%M%S)
+    mkdir -p "$saved"
+    printf '%s\n' "$status" > "$saved/runner-exit.txt"
+    docker inspect "$CONTAINER" > "$saved/container.json" 2> "$saved/inspect-error.txt" || true
+    docker logs "$CONTAINER" > "$saved/container.log" 2>&1 || true
+    if [ -d "$WORK/$ACTIVE_APP/diag" ]; then cp -a "$WORK/$ACTIVE_APP/diag" "$saved/diag"; fi
+    log "$ACTIVE_APP rep $ACTIVE_REP: preserved failed attempt in $saved"
+  fi
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+}
+trap 'teardown "$?"' EXIT # PATCH: signals leave a failed attempt rather than continuing measurements.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+(cd "$BENCH/loadgen" && CARGO_TARGET_DIR=$ROOT/target/bench cargo build --release -q)
+
+image_for() { # PATCH: rust-v0.1.1, dotnet, dotnet-aot, dotnet-jit, and the variants of each
+  case "$(base_app "$1")" in
+    reference) echo "$REFERENCE_IMAGE" ;;
+    rust) echo "$RUST_IMAGE" ;;
+    rust-main) echo "$RUST_MAIN_IMAGE" ;;
+    c) echo "$C_IMAGE" ;;
+    rust-v0.1.1) echo "$RUST_V011_IMAGE" ;;
+    dotnet) echo "$DOTNET_IMAGE" ;;
+    dotnet-aot) echo "$DOTNET_AOT_IMAGE" ;;
+    dotnet-jit) echo "$DOTNET_JIT_IMAGE" ;;
+  esac
+}
+
+# PATCH: refuse an app this harness can't run as named, before any container starts.
+for app in ${APPS//,/ }; do
+  [ -n "$(image_for "$app")" ] || { echo "unknown app $app (targets: reference rust rust-main [explicit RUST_MAIN_IMAGE] c [explicit C_IMAGE] rust-v0.1.1 dotnet dotnet-aot dotnet-jit)" >&2; exit 2; }
+  if [ "$(base_app "$app")" = rust-main ] && [[ ! "$RUST_MAIN_IMAGE" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then echo 'rust-main requires an immutable image ID' >&2; exit 2; fi
+  if [ "$(base_app "$app")" = c ] && [[ ! "$C_IMAGE" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then echo 'c requires an immutable image ID' >&2; exit 2; fi
+  if has_mod "$app" listener && [ "$NETWORK" != host ]; then echo "$app: -listener needs NETWORK=host" >&2; exit 2; fi
+  if has_mod "$app" counters && [[ "$(base_app "$app")" != dotnet* ]]; then echo "$app: -counters is for .NET apps" >&2; exit 2; fi
+  docker image inspect "$(image_for "$app")" >/dev/null 2>&1 || { echo "$app: no image $(image_for "$app") (bench/images builds it)" >&2; exit 2; }
+done
+
+# PATCH: the load generator holds one socket per cable client, so its soft RLIMIT_NOFILE must cover the largest
+# CABLE_CLIENTS (the containers get CONTAINER_NOFILE).
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+if suite cable; then
+  max_clients=0; for n in $CABLE_CLIENTS; do [ "$n" -gt "$max_clients" ] && max_clients=$n; done
+  if [ "$(ulimit -n)" != unlimited ] && [ "$(ulimit -n)" -lt $((max_clients + 1024)) ]; then
+    echo "ulimit -n is $(ulimit -n): the load generator needs $((max_clients + 1024)) for $max_clients cable clients" >&2; exit 2
+  fi
+  if [ "$CONTAINER_NOFILE" -lt $((3 * max_clients + 1024)) ]; then
+    echo "CONTAINER_NOFILE=$CONTAINER_NOFILE is too low for $max_clients clients through a front server" >&2; exit 2
+  fi
+fi
+
+ROOM=$(label "$ROOM_LABEL")            # the busy room (131 messages; the long-room seed's ~236,000)
+WRITE_ROOM=$(label "$WRITE_ROOM_LABEL") # writes and uploads go here, so the busy room stays put
+BEFORE=$(label "$BEFORE_LABEL")        # a page in the middle of the busy room (near the top of the long room)
+AVATAR=$(label avatar_tokens.jason)    # image avatar
+EMAIL=$(label emails.david)
+PASSWORD=$(label passwords.all)
+DAVID=$(label users.david)             # PATCH: whose rooms the search expectation looks in
+
+# Environment: parity/.env.reference, but with the reference's *default* process model for
+# SERVER_CPUS (config/puma.rb: workers = ceil(nproc * 0.666), JOB_CONCURRENCY the same, 5 threads;
+# config/resque-pool.yml: ceil(nproc * 0.5) Resque workers). The Rust app reads RAILS_MAX_THREADS
+# (reader pool) and JOB_CONCURRENCY (job workers) the same way; it is always one process.
+env_args() {
+  local ncpu; ncpu=$(taskset -c "$SERVER_CPUS" nproc)
+  local workers=$(( (ncpu * 666 + 999) / 1000 ))
+  local base; base=$(base_app "${1:-}")
+  grep -Ev '^(#|$|WEB_CONCURRENCY|JOB_CONCURRENCY|RAILS_MAX_THREADS|RAILS_LOG_LEVEL)' "$ENV_FILE" | sed 's/^/-e\n/'
+  printf '%s\n' -e "WEB_CONCURRENCY=$workers" -e "JOB_CONCURRENCY=$workers" -e RAILS_MAX_THREADS=5 -e RAILS_LOG_LEVEL=warn
+  if [[ "$base" = rust* ]]; then local e; for e in $RUST_EXTRA_ENV; do printf '%s\n' -e "$e"; done; fi
+  if [ "$base" = c ]; then local e; for e in $C_EXTRA_ENV; do printf '%s\n' -e "$e"; done; fi
+  # PATCH: rootless Podman without the cpuset controller pins the container after it starts
+  # (eng/docker-shim), so the .NET runtime would size its GC heaps and thread pool for every host CPU.
+  if [[ "$base" = dotnet* ]]; then
+    printf '%s\n' -e "DOTNET_PROCESSOR_COUNT=$ncpu"
+    local e; for e in $DOTNET_EXTRA_ENV; do printf '%s\n' -e "$e"; done
+  fi
+}
+
+# Web Push and webhook deliveries to the seed's real endpoints (fcm.googleapis.com, ...) go to a
+# closed local port instead, so they fail fast without leaving the box (host networking rules out
+# the --dns 127.0.0.1 this used to rely on).
+neuter_deliveries() {
+  python3 - "$1" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("UPDATE push_subscriptions SET endpoint = 'https://127.0.0.1:9/push/' || id")
+db.execute("UPDATE webhooks SET url = 'http://127.0.0.1:9/hook/' || id")
+db.commit()
+PY
+}
+
+# PATCH: Rust's extra index (once-campfire-rust aa3b894, crates/db/src/schema.rs ADDITIONS), in this run's copy only.
+add_room_index() {
+  python3 - "$1" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute('CREATE INDEX IF NOT EXISTS "index_messages_on_room_id_and_created_at" ON "messages" ("room_id", "created_at")')
+db.commit()
+PY
+}
+
+# PATCH: what each route's response must contain, from the rows of this run's copy (before the app starts): the busy
+# room's newest message (the room page's last one), the newest message before BEFORE (on the messages page, as
+# Message.page_before orders it), and the newest message in David's rooms that matches "coffee" (search).
+expectations() {
+  python3 - "$1" "$ROOM" "$BEFORE" "$DAVID" <<'PY'
+import json, sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+room, before, david = int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+one = lambda sql, *a: (db.execute(sql, a).fetchone() or [None])[0]
+print(json.dumps({
+  "newest": one("SELECT id FROM messages WHERE room_id = ? ORDER BY created_at DESC, id DESC LIMIT 1", room),
+  "previous": one("SELECT id FROM messages WHERE room_id = ? AND created_at < (SELECT created_at FROM messages WHERE id = ?) "
+                  "ORDER BY created_at DESC, id DESC LIMIT 1", room, before),
+  "search": one("SELECT m.id FROM messages m JOIN memberships ms ON ms.room_id = m.room_id AND ms.user_id = ? "
+                "JOIN message_search_index idx ON idx.rowid = m.id WHERE idx.body MATCH 'coffee' "
+                "ORDER BY m.created_at DESC, m.id DESC LIMIT 1", david),
+  "messages_in_room": one("SELECT count(*) FROM messages WHERE room_id = ?", room),
+}))
+PY
+}
+expect_id() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; print("" if v is None else v)' "$WORK/$1/expect.json" "$2"; }
+
+# PATCH: with host networking the reference's Redis (config/redis.conf: port 6379) would collide with anything on the
+# host's 6379, and Rails would then talk to that server instead. It moves to REDIS_PORT: the image's own redis.conf
+# with only the port changed, and REDIS_URL (config/cable.yml, config/initializers/resque.rb, the cache store).
+redis_conf() {
+  local f=$WORK/redis-$REDIS_PORT.conf
+  docker run --rm --name "$CONTAINER_PREFIX-redisconf-$PORT" --label "bench.owner=$BENCH_OWNER" --entrypoint cat "$(image_for "$1")" \
+    /rails/config/redis.conf | sed -E "s/^port .*/port $REDIS_PORT/" > "$f"
+  grep -q "^port $REDIS_PORT\$" "$f" || { echo "could not move the reference's Redis to port $REDIS_PORT" >&2; return 1; }
+  echo "$f"
+}
+port_free() { ! ss -Htln "sport = :$1" | grep -q .; }
+
+# PATCH: rootless Podman (eng/docker-shim) keeps containers under the user's systemd slice and
+# reports the path itself; Docker's inspect has no .State.CgroupPath.
+cgroup_dir() {
+  local docker_dir; docker_dir="/sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' "$CONTAINER").scope"
+  if [ -d "$docker_dir" ]; then echo "$docker_dir"; return; fi
+  echo "/sys/fs/cgroup$(docker inspect -f '{{.State.CgroupPath}}' "$CONTAINER" 2>/dev/null)"
+}
+mem_anon() { awk '$1=="anon"{print $2}' "$1/memory.stat"; }
+
+# PATCH: each process in the container as the kernel sees it: its role, soft RLIMIT_NOFILE and thread count; for the
+# .NET app also its threads by name (".NET Server GC" is one per server-GC heap, ".NET BGC" a background GC thread,
+# ".NET Tiered Com..." the tiered-compilation worker) and its effective DOTNET_ environment.
+observe_processes() {
+  python3 - "$1" "$BENCH/lib" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[2])
+from procmem import role
+cg, procs, app = sys.argv[1], [], None
+for pid in open(f"{cg}/cgroup.procs").read().split():
+    try:
+        cmd = open(f"/proc/{pid}/cmdline").read().replace("\0", " ").strip()
+        limits = open(f"/proc/{pid}/limits").read().splitlines()
+        tasks = os.listdir(f"/proc/{pid}/task")
+    except OSError:
+        continue
+    nofile = next((l.split()[3] for l in limits if l.startswith("Max open files")), None)
+    procs.append({"pid": int(pid), "role": role(cmd), "cmdline": cmd[:120], "nofile": nofile, "threads": len(tasks)})
+    if role(cmd) == "campfire" and app is None:
+        names = {}
+        for t in tasks:
+            try:
+                n = open(f"/proc/{pid}/task/{t}/comm").read().strip()
+            except OSError:
+                continue
+            names[n] = names.get(n, 0) + 1
+        env = {}
+        try:
+            for kv in open(f"/proc/{pid}/environ", "rb").read().split(b"\0"):
+                k, _, v = kv.decode(errors="replace").partition("=")
+                if k.startswith("DOTNET_"):
+                    env[k] = v
+        except OSError:
+            pass
+        app = {"pid": int(pid), "threads": len(tasks), "server_gc_threads": names.get(".NET Server GC", 0),
+               "background_gc_threads": names.get(".NET BGC", 0),
+               "tiered_compilation_threads": sum(v for k, v in names.items() if k.startswith(".NET Tiered")),
+               "thread_names": names, "dotnet_env": env}
+print(json.dumps({"processes": procs, "app": app}))
+PY
+}
+
+# Samples memory.current and anon every 200ms, keeping the maxima in $1.
+start_sampler() {
+  local cg=$1 out=$2
+  ( max_cur=0 max_anon=0
+    while [ -d "$cg" ]; do
+      cur=$(cat "$cg/memory.current" 2>/dev/null || echo 0); an=$(mem_anon "$cg" 2>/dev/null || echo 0)
+      [ "$cur" -gt "$max_cur" ] && max_cur=$cur; [ "$an" -gt "$max_anon" ] && max_anon=$an
+      echo "{\"peak_current_mb\": $((max_cur / 1048576)), \"peak_anon_mb\": $((max_anon / 1048576))}" > "$out.tmp" && mv "$out.tmp" "$out"
+      sleep 0.2
+    done ) &
+  SAMPLER=$!
+}
+
+start_app() {
+  local app=$1 dir=$WORK/$1
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$dir"; mkdir -p "$dir/db" "$dir/storage"
+  cp -a --reflink=auto "$SEED/db/." "$dir/db/"; cp -a --reflink=auto "$SEED/storage/." "$dir/storage/"
+  neuter_deliveries "$dir/db/production.sqlite3"
+  # C's schema marker is metadata only; never alter fixture rows or remove avatar attachments.
+  if [ "$(base_app "$app")" = c ]; then sqlite3 "$dir/db/production.sqlite3" 'PRAGMA user_version=1'; fi
+  local fixture_mount=()
+  if [[ "$(base_app "$app")" = dotnet* ]] && [ "${DOTNET_NATIVE_SECURITY:-1}" = 1 ]; then
+    mkdir -p "$dir/keys"
+    if [ -d "$SEED/keys" ]; then cp -a --reflink=auto "$SEED/keys/." "$dir/keys/" || return 1; fi
+    fixture_mount=(-v "$dir/keys:/rails/storage/keys")
+    local fixture_args=(); mapfile -t fixture_args < <(env_args "$app")
+    # The source seed and labels are synthetic; stamp only this freshly copied disposable database.
+    sqlite3 "$dir/db/production.sqlite3" "INSERT OR REPLACE INTO ar_internal_metadata(key,value,created_at,updated_at) VALUES ('campfire_synthetic_fixture','1',datetime('now'),datetime('now'))" || return 1
+    docker run --rm --user "$(id -u):$(id -g)" --entrypoint /usr/local/bin/campfire \
+      "${fixture_args[@]}" -e CAMPFIRE_SYNTHETIC_FIXTURE=1 -e "CAMPFIRE_SYNTHETIC_PASSWORD=$PASSWORD" \
+      -e "CAMPFIRE_SYNTHETIC_AVATAR_ID=$(label users.jason)" \
+      -v "$dir/db:/rails/storage/db" -v "$dir/storage:/rails/storage/files" "${fixture_mount[@]}" \
+      "$(image_for "$app")" prepare-fixture >&2 || return 1
+  fi
+  if has_mod "$app" index; then add_room_index "$dir/db/production.sqlite3"; fi # PATCH
+  if [ "$RESPONSE_CACHE_PROFILE" = distinct ]; then
+    [ -x "$RESPONSE_CACHE_LOAD_BIN" ] || { echo 'Response-cache generator must be prebuilt' >&2; return 1; }
+    "$RESPONSE_CACHE_LOAD_BIN" prepare --database "$dir/db/production.sqlite3" --room "$ROOM" --email "$EMAIL" --out "$dir/viewers.json" || return 1
+  fi
+  expectations "$dir/db/production.sqlite3" > "$dir/expect.json" # PATCH
+  local args=(); mapfile -t args < <(env_args "$app")
+  local extra=() conf # PATCH: the reference's Redis port, EventPipe, labels
+  if [ "$NETWORK" = host ] && [ "$(base_app "$app")" = reference ]; then
+    port_free "$REDIS_PORT" || { echo "REDIS_PORT $REDIS_PORT is taken on the host" >&2; return 1; }
+    conf=$(redis_conf "$app") || return 1
+    extra+=(-e "REDIS_URL=redis://127.0.0.1:$REDIS_PORT" -v "$conf:/rails/config/redis.conf:ro")
+  fi
+  if has_mod "$app" counters; then
+    mkdir -p "$dir/diag"
+    extra+=(-v "$dir/diag:/bench-diag" -e DOTNET_EnableEventPipe=1 -e DOTNET_EventPipeOutputPath=/bench-diag/campfire.nettrace
+      -e "DOTNET_EventPipeOutputStreaming=$COUNTERS_STREAMING" -e "DOTNET_EventPipeConfig=$COUNTERS_CONFIG" -e "DOTNET_EventPipeCircularMB=$COUNTERS_BUFFER_MB") # PATCH
+  fi
+  sync
+  local t0; t0=$(date +%s.%N)
+  # --network host: no docker-proxy between the load generator and the app (it only exists for
+  # published ports reached from the host, and cost up to ~20% of a request; see
+  # https://github.com/basecamp/once-campfire-rust/blob/9e2a11005649b76425a2f3f4b7f4863522ff40ae/plans/perf-attribution.md §1). Both front servers (Thruster, the Rust app's own) listen on
+  # HTTP_PORT, their app on TARGET_PORT; the reference's Redis takes REDIS_PORT (PATCH: was the host's 6379).
+  local net=(--network host -e "HTTP_PORT=$PORT" -e "TARGET_PORT=$((PORT + 1))")
+  [ "$NETWORK" = bridge ] && net=(--dns 127.0.0.1 -p "127.0.0.1:$PORT:80")
+  docker run -d --name "$CONTAINER" --label "bench.owner=$BENCH_OWNER" --label "bench.app=$app" \
+    --cpuset-cpus "$SERVER_CPUS" --ulimit "nofile=$CONTAINER_NOFILE:$CONTAINER_NOFILE" --user "$(id -u):$(id -g)" \
+    "${net[@]}" "${args[@]}" "${extra[@]}" \
+    -v "$dir/db:/rails/storage/db" -v "$dir/storage:/rails/storage/files" "${fixture_mount[@]}" \
+    "$(image_for "$app")" >/dev/null
+  local url; url=$(app_url "$app") # PATCH: -listener apps are up when their own listener answers
+  for _ in $(seq 1 3000); do
+    if curl "${CURL_USER_AGENT[@]}" -fsS -o /dev/null "$url/up" 2>/dev/null; then break; fi
+    sleep 0.02
+  done
+  curl "${CURL_USER_AGENT[@]}" -fsS -o /dev/null "$url/up" || { docker logs "$CONTAINER" | tail -30 >&2; return 1; }
+  python3 -c "import sys; print(round((float(sys.argv[2]) - float(sys.argv[1])) * 1000))" "$t0" "$(date +%s.%N)"
+}
+
+# Waits for the 1-minute load average to drop below LOAD_MAX (the previous run's load decays with
+# a one-minute time constant), for at most LOAD_WAIT_SECS.
+wait_for_quiet() {
+  local waited=0
+  while awk -v max="$LOAD_MAX" '{exit !($1 >= max)}' /proc/loadavg && [ "$waited" -lt "$LOAD_WAIT_SECS" ]; do
+    sleep 10; waited=$((waited + 10))
+  done
+  # PATCH: a wait deadline is a failed gate, not permission to measure a busy host.
+  if awk -v max="$LOAD_MAX" '{exit !($1 >= max)}' /proc/loadavg; then
+    log "host is still above LOAD_MAX=$LOAD_MAX after ${waited}s; refusing an invalid measurement"
+    return 1
+  fi
+  log "load before run: $(cut -d' ' -f1-3 /proc/loadavg) (waited ${waited}s)"
+  LOAD_WAITED=$waited
+}
+
+# PATCH: each route's path (or POST) and what its every response must be (bench/loadgen --expect-*).
+route_request() {
+  local app=$1 name=$2 newest previous found
+  newest=$(expect_id "$app" newest); previous=$(expect_id "$app" previous); found=$(expect_id "$app" search)
+  EXPECT=(--expect-status 200 --validate-every "$VALIDATE_EVERY")
+  case "$name" in
+    room_show) REQUEST=(--path "/rooms/$ROOM"); EXPECT+=(--expect-type text/html --expect-body "<turbo-cable-stream-source|data-message-id=\"$newest\"") ;;
+    messages_page) REQUEST=(--path "/rooms/$ROOM/messages?before=$BEFORE"); EXPECT+=(--expect-type text/html --expect-body "data-message-id=\"$previous\"") ;;
+    sidebar) REQUEST=(--path /users/me/sidebar); EXPECT+=(--expect-type text/html --expect-body "href=\"/rooms/$ROOM\"") ;;
+    search) REQUEST=(--path "/searches?q=coffee"); EXPECT+=(--expect-type text/html --expect-body "${found:+data-message-id=\"$found\"}") ;;
+    avatar)
+      local avatar_token=$AVATAR
+      if [[ "$(base_app "$app")" = dotnet* ]] && [ "${DOTNET_NATIVE_SECURITY:-1}" = 1 ]; then
+        avatar_token=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["avatar_token"])' "$WORK/$app/db/native-fixture.json") || return 1
+      fi
+      REQUEST=(--path "/users/$avatar_token/avatar"); EXPECT+=(--expect-type image/) ;;
+    static_css) REQUEST=(--path "$CSS"); EXPECT+=(--expect-type text/css) ;;
+    up)
+      REQUEST=(--path /up)
+      if [[ "$(base_app "$app")" = dotnet* ]] && [ "${DOTNET_NATIVE_SECURITY:-1}" = 1 ]; then
+        EXPECT+=(--expect-type text/plain --expect-body 'OK')
+      else
+        EXPECT+=(--expect-type text/html --expect-body "background-color: green")
+      fi ;;
+    post_message) REQUEST=(--post-room "$WRITE_ROOM" --csrf "$CSRF"); EXPECT+=(--expect-type text/vnd.turbo-stream.html --expect-echo 1) ;;
+    *) echo "unknown route $name (routes: $ALL_ROUTES)" >&2; return 1 ;;
+  esac
+}
+
+# PATCH: SUITES=fill: post FILL_MESSAGES messages into ROOM as fast as FILL_CONC connections go, stop the app cleanly
+# (so SQLite folds its WAL) and copy its storage to FILL_OUT.
+fill_room() {
+  local app=$1 rep=$2 url=$3 cookie=$4 dir=$WORK/$1
+  [ -n "$FILL_OUT" ] && [ "$FILL_MESSAGES" -gt 0 ] || { echo "SUITES=fill needs FILL_MESSAGES and FILL_OUT" >&2; return 1; }
+  log "$app: posting $FILL_MESSAGES messages into room $ROOM ($FILL_CONC connections)"
+  local res; res=$(lg http --base "$url" --cookie "$cookie" --post-room "$ROOM" --csrf "$CSRF" --conc "$FILL_CONC" \
+    --duration 86400 --requests "$FILL_MESSAGES" --expect-status 200 --expect-type text/vnd.turbo-stream.html --expect-echo 1)
+  log "$app: fill $(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(r["rps"], "posts/s", r["statuses"], "errors", r["errors"], "mismatches", r["mismatches"])' "$res")"
+  docker stop -t 120 "$CONTAINER" >/dev/null
+  mkdir -p "$FILL_OUT/db" "$FILL_OUT/storage"
+  cp -a --reflink=auto "$dir/db/." "$FILL_OUT/db/"; cp -a --reflink=auto "$dir/storage/." "$FILL_OUT/storage/"
+  if [ -d "$dir/keys" ]; then
+    mkdir -p "$FILL_OUT/keys"; cp -a --reflink=auto "$dir/keys/." "$FILL_OUT/keys/"
+  fi
+  python3 -c 'import json,sys; r=json.loads(sys.argv[1]); json.dump({"app": sys.argv[2], "room": int(sys.argv[3]), "fill": r}, open(sys.argv[4], "w"), indent=1)' \
+    "$res" "$app" "$ROOM" "$OUT/fill.json"
+  docker rm -f "$CONTAINER" >/dev/null
+  rm -rf "$dir"
+}
+
+# Optional raw front-cache receipts bracket the window; no extra requests run inside timing.
+capture_front_headers() {
+  local app=$1 rep=$2 name=$3 c=$4 edge=$5 url=$6 cookie=$7 path=$8
+  [ "${CAPTURE_FRONT_CACHE_HEADERS:-0}" = 1 ] || return 0
+  [[ "$name" = avatar || "$name" = static_css ]] || return 0
+  local encoding=gzip; has_mod "$app" identity && encoding=identity
+  mkdir -p "$OUT/raw/$app-$rep/front-cache"
+  curl "${CURL_USER_AGENT[@]}" -fsS --max-time 10 -H "Accept-Encoding: $encoding" -H "Cookie: $cookie" \
+    -D "$OUT/raw/$app-$rep/front-cache/$name-c$c-$edge.headers" -o /dev/null "$url$path"
+}
+
+run_rep() {
+  local app=$1 rep=$2 f=$OUT/$1-$2.json
+  # PATCH: completed checkpoints must pass current validation before any measurement is skipped.
+  if [ "${RESUME_COMPLETED:-0}" = 1 ] && [ -f "$f" ]; then
+    local validation_exit=0
+    dotnet "$BENCH/resume-result.cs" "$f" "$app" "$rep" "$SUITES" "$HTTP_ROUTES" "$HTTP_CONCS" "$CABLE_CLIENTS" "$UPLOAD_REPS" "$VALIDATE_EVERY" "$LOAD_MAX" || validation_exit=$?
+    if [ "$validation_exit" = 0 ]; then
+      log "$app rep $rep: reused validated completed result"
+      return
+    elif [ "$validation_exit" = 3 ]; then
+      local saved=$OUT/superseded/$app-$rep-$(date +%Y%m%dT%H%M%S)
+      mkdir -p "$saved"
+      mv "$f" "$saved/result.json"
+      if [ -d "$OUT/raw/$app-$rep" ]; then mv "$OUT/raw/$app-$rep" "$saved/raw"; fi
+      log "$app rep $rep: preserved old upload result in $saved; repeating the whole repetition"
+    else
+      return "$validation_exit"
+    fi
+  fi
+  if [ "${RESUME_COMPLETED:-0}" = 1 ] && [ -d "$OUT/raw/$app-$rep" ]; then
+    mkdir -p "$OUT/raw-interrupted"
+    mv "$OUT/raw/$app-$rep" "$OUT/raw-interrupted/$app-$rep-$(date +%Y%m%dT%H%M%S)"
+  fi
+  wait_for_quiet
+  ACTIVE_APP=$app; ACTIVE_REP=$rep # PATCH: the exit trap must know which unfinished attempt to preserve.
+  local load_start; load_start=$(cat /proc/loadavg)
+  log "$app rep $rep: starting (load: $(cut -d' ' -f1-3 /proc/loadavg))"
+  local cold_ms; cold_ms=$(start_app "$app")
+  local cg; cg=$(cgroup_dir)
+  RESPONSE_CACHE_CGROUP=$cg
+  local url; url=$(app_url "$app") # PATCH: the front server, or the app's own listener
+  suite fill || sleep 10
+  local idle_cur idle_anon
+  idle_cur=$(( $(cat "$cg/memory.current") / 1048576 )); idle_anon=$(( $(mem_anon "$cg") / 1048576 ))
+  local observed_idle; observed_idle=$(observe_processes "$cg") # PATCH
+  start_sampler "$cg" "$OUT/.$app-$rep.mem"
+  log "$app rep $rep: cold start ${cold_ms}ms, idle ${idle_cur}MB (anon ${idle_anon}MB)"
+
+  local cookie scrape csrf streams css
+  local auth_cookie=session_token
+  if [[ "$(base_app "$app")" = dotnet* ]] && [ "${DOTNET_NATIVE_SECURITY:-1}" = 1 ]; then auth_cookie=.Campfire.Auth; fi
+  cookie=$(lg login --base "$url" --auth-cookie-name "$auth_cookie" --email "$EMAIL" --password "$PASSWORD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cookie"])')
+  scrape=$(lg scrape --base "$url" --cookie "$cookie" --room "$ROOM")
+  if [ "$BENCH_LAST_ROOM_COOKIE" = 1 ]; then
+    [[ "$ROOM" =~ ^[0-9]+$ ]] || { echo "Repeat-visit cookie needs a numeric room" >&2; exit 2; }
+    cookie="$cookie; last_room=$ROOM"
+  fi
+  csrf=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["csrf"] or "")' "$scrape")
+  streams=$(python3 -c 'import json,sys; print(",".join(json.loads(sys.argv[1])["streams"]))' "$scrape")
+  css=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["css"])' "$scrape")
+  CSRF=$csrf CSS=$css
+  if [ "$RESPONSE_CACHE_PROFILE" = distinct ]; then
+    local viewer_agent=(); [ -z "$USER_AGENT" ] || viewer_agent=(--user-agent "$USER_AGENT")
+    RESPONSE_CACHE_USERS=$WORK/$app/viewer-sessions.json
+    taskset -c "$LOADGEN_CPUS" "$RESPONSE_CACHE_LOAD_BIN" login --base "$url" --users "$WORK/$app/viewers.json" --password "$PASSWORD" --out "$RESPONSE_CACHE_USERS" "${viewer_agent[@]}" || return 1
+  fi
+
+  if suite fill; then # PATCH
+    kill "$SAMPLER" 2>/dev/null || true; SAMPLER=""
+    fill_room "$app" "$rep" "$url" "$cookie"
+    return
+  fi
+
+  local routes=() r
+  for r in $HTTP_ROUTES; do routes+=("$r"); done # PATCH: HTTP_ROUTES
+  local http_json="[]" name enc=()
+  has_mod "$app" identity && enc=(--gzip 0) # PATCH: every target's -identity (was rust-identity only)
+  suite http || routes=()
+  local writer_report=$OUT/.$app-$rep-paced-writer.json
+  if [ "$PACED_WRITER_RATE" -gt 0 ]; then
+    suite http && ! suite cable && ! suite upload || { echo 'Paced writer requires a dedicated HTTP-only run' >&2; return 1; }
+    if has_mod "$app" counters && [ "${PACED_WRITER_DIAGNOSTIC:-0}" != 1 ]; then
+      echo 'Traced paced writers require explicit PACED_WRITER_DIAGNOSTIC=1; never use their timings' >&2; return 1
+    fi
+    [[ " $HTTP_ROUTES " != *' post_message '* ]] || { echo 'Paced writer cannot overlap a saturated posting workload' >&2; return 1; }
+    local writer_agent=(); [ -z "$USER_AGENT" ] || writer_agent=(--user-agent "$USER_AGENT")
+    local writer_bin=${PACED_WRITER_BIN:-$ROOT/target/bench/paced-writer/PacedWriter}
+    [ -x "$writer_bin" ] || { echo 'Build the paced writer before benchmarking: dotnet build bench/lib/PacedWriter.cs -c Release -o target/bench/paced-writer' >&2; return 1; }
+    taskset -c "$LOADGEN_CPUS" "$writer_bin" --base "$url" --cookie "$cookie" --room "$WRITE_ROOM" --csrf "$CSRF" --rate "$PACED_WRITER_RATE" --out "$writer_report" "${writer_agent[@]}" & PACED_WRITER=$!
+  fi
+  for name in "${routes[@]}"; do
+    route_request "$app" "$name"
+    if [ "$RESPONSE_CACHE_PROFILE" = freshness ] && [ "$name" = messages_page ]; then
+      REQUEST=(--path "/rooms/$ROOM/messages")
+      EXPECT=(--expect-status 200 --validate-every "$VALIDATE_EVERY" --expect-type text/html --expect-body 'data-message-id="')
+    fi
+    if [ "$RESPONSE_CACHE_PROFILE" = distinct ] && [ "$name" = search ]; then
+      # David's newest match can be in a room these viewers cannot access. The per-viewer
+      # validator requires their own private match and rejects every other viewer's match.
+      EXPECT=(--expect-status 200 --validate-every "$VALIDATE_EVERY" --expect-type text/html --expect-body 'data-message-id="')
+    fi
+    # PATCH: WARMUP_SECS at WARMUP_CONC (JIT tiering and caches settle before the measured runs)
+    lg http --base "$url" --cookie "$cookie" "${REQUEST[@]}" "${enc[@]}" --conc "$WARMUP_CONC" --duration "$WARMUP_SECS" >/dev/null # warm up
+    for c in $HTTP_CONCS; do
+      capture_front_headers "$app" "$rep" "$name" "$c" before "$url" "$cookie" "${REQUEST[1]}"
+      local res; res=$(lg http --base "$url" --cookie "$cookie" "${REQUEST[@]}" "${EXPECT[@]}" "${enc[@]}" --conc "$c" --duration "$HTTP_SECS" --server-cgroup "$cg")
+      if [ "$RESPONSE_CACHE_PROFILE" != ordinary ]; then
+        local checked=$OUT/raw/$app-$rep/$name-c$c.json
+        printf '%s\n' "$res" > "$checked"
+        "$RESPONSE_CACHE_LOAD_BIN" verify --result "$checked" --database "$WORK/$app/db/production.sqlite3" >&2 || return 1
+      fi
+      capture_front_headers "$app" "$rep" "$name" "$c" after "$url" "$cookie" "${REQUEST[1]}"
+      http_json=$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); r["route"]=sys.argv[3]; a.append(r); print(json.dumps(a))' "$http_json" "$res" "$name")
+      log "$app rep $rep: $name c=$c $(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(r["rps"], "rps p50", r["latency"].get("p50_ms"), "p99", r["latency"].get("p99_ms"), r["statuses"], "err", r["errors"], "mismatch", r.get("mismatches"), "lg", r.get("loadgen", {}).get("util"))' "$res")"
+    done
+  done
+
+  if [ -n "${PACED_WRITER:-}" ]; then
+    kill "$PACED_WRITER" 2>/dev/null || true
+    wait "$PACED_WRITER" || return 1
+    PACED_WRITER=""
+    python3 - "$writer_report" "$WORK/$app/db/production.sqlite3" <<'PY'
+import json, sqlite3, sys
+p, database = sys.argv[1:]
+report = json.load(open(p))
+with sqlite3.connect(database) as db:
+    committed = db.execute("SELECT count(*) FROM messages m JOIN action_text_rich_texts rt ON rt.record_type='Message' AND rt.record_id=m.id WHERE m.room_id=? AND instr(rt.body,?)>0", (report['room'], report['body_prefix'])).fetchone()[0]
+report['independently_verified_commits'] = committed
+if report['errors'] or committed != report['successful']:
+    raise SystemExit('Paced writer response/commit validation failed')
+json.dump(report, open(p, 'w'), indent=2)
+PY
+  fi
+
+  local cable_json="[]" n upload_json='{}'
+  if has_mod "$app" identity || ! suite cable; then CABLE_CLIENTS_RUN=""; else CABLE_CLIENTS_RUN=$CABLE_CLIENTS; fi
+  for n in $CABLE_CLIENTS_RUN; do
+    local pm=$OUT/.$app-$rep-cable$n
+    taskset -c "$PROCMEM_CPUS" python3 "$BENCH/lib/procmem.py" sample "$cg" "$pm.jsonl" & PROCMEM=$!
+    local res; res=$(lg cable --base "$url" --cookie "$cookie" --room "$ROOM" --csrf "$csrf" --streams "$streams" \
+      --deflate "$CABLE_DEFLATE" --clients "$n" --tput-secs "$CABLE_TPUT_SECS" --posters "$CABLE_POSTERS" --latency-msgs "$CABLE_LATENCY_MSGS" 2> "$pm.stderr")
+    sleep 0.5; kill "$PROCMEM" 2>/dev/null || true; wait "$PROCMEM" 2>/dev/null || true; PROCMEM=""
+    # PATCH: baseline_total_pss_mb, the container before any client connected (the first sample), for memory per client.
+    res=$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); r["process_memory"]=json.loads(sys.argv[2]); first=open(sys.argv[3]).readline(); r["process_memory"]["baseline_total_pss_mb"]=round(sum(v["pss_mb"] for v in json.loads(first)["roles"].values()), 1) if first.strip() else None; print(json.dumps(r))' \
+      "$res" "$(python3 "$BENCH/lib/procmem.py" phases "$pm.jsonl" "$pm.stderr")" "$pm.jsonl")
+    cable_json=$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.append(json.loads(sys.argv[2])); print(json.dumps(a))' "$cable_json" "$res")
+    log "$app rep $rep: cable $n clients $(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); v=r.get("verification", {}); print("ready", r["ready"], "lat all p50", r["latency"]["all_clients"].get("p50_ms"), "p99", r["latency"]["all_clients"].get("p99_ms"), "tput", r["throughput"]["delivered_msgs_per_sec"], "msg/s", r["throughput"]["complete"], "/", r["throughput"]["posted"], "missing", v.get("missing"), "mismatch", v.get("mismatches"))' "$res")"
+    sleep 2
+  done
+
+  if ! has_mod "$app" identity && suite upload; then
+    upload_json=$(lg upload --base "$url" --cookie "$cookie" --room "$WRITE_ROOM" --csrf "$csrf" \
+      --file "$UPLOAD_FILE" --reps "$UPLOAD_REPS")
+    log "$app rep $rep: upload median $(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(r["median_total_ms"], "ms, failures", r.get("failures"))' "$upload_json")"
+  fi
+
+  sleep 0.5
+  local peak; peak=$(cat "$OUT/.$app-$rep.mem")
+  local cg_peak; cg_peak=$(( $(cat "$cg/memory.peak" 2>/dev/null || echo 0) / 1048576 ))
+  local observed_end; observed_end=$(observe_processes "$cg") # PATCH
+  kill "$SAMPLER" 2>/dev/null || true; SAMPLER=""
+  local counters='null' # PATCH: -counters: stop cleanly so EventPipe closes its file, then keep it under raw/
+  if has_mod "$app" counters; then
+    docker stop -t 30 "$CONTAINER" >/dev/null || true
+    mkdir -p "$OUT/raw/$app-$rep"; cp -a "$WORK/$app/diag/." "$OUT/raw/$app-$rep/" 2>/dev/null || true
+    counters=$(python3 -c 'import json,os,sys; d=sys.argv[1]; fs=[f for f in os.listdir(d)] if os.path.isdir(d) else []; print(json.dumps({"config": sys.argv[2], "files": {f: os.path.getsize(os.path.join(d, f)) for f in fs}}))' "$OUT/raw/$app-$rep" "$COUNTERS_CONFIG")
+  fi
+  if [ "$CAPTURE_RESPONSE_CACHE_METRICS" = 1 ]; then
+    docker stop -t 30 "$CONTAINER" >/dev/null || return 1
+    mkdir -p "$OUT/raw/$app-$rep"
+    docker logs "$CONTAINER" > "$OUT/raw/$app-$rep/application.log" 2>&1
+  fi
+  local extras; extras=$(python3 -c '
+import json, sys
+app, base, url, mods, seed, idle, end, counters, waited, expect = sys.argv[1:11]
+print(json.dumps({"base": base, "url": url, "variants": mods.split(), "seed": seed, "warmup_secs": float(sys.argv[11]),
+  "warmup_conc": int(sys.argv[12]), "validate_every": int(sys.argv[13]), "load_waited_secs": int(waited),
+  "expectations": json.load(open(expect)), "processes": {"idle": json.loads(idle), "end": json.loads(end)},
+  "counters": json.loads(counters), "paced_writer": json.load(open(sys.argv[14])) if sys.argv[14] else None}))' \
+    "$app" "$(base_app "$app")" "$url" "$(app_mods "$app")" "$SEED_NAME" "$observed_idle" "$observed_end" "$counters" \
+    "${LOAD_WAITED:-0}" "$WORK/$app/expect.json" "$WARMUP_SECS" "$WARMUP_CONC" "$VALIDATE_EVERY" "$( [ "$PACED_WRITER_RATE" -gt 0 ] && echo "$writer_report" || true )")
+  dotnet "$BENCH/result-envelope.cs" "$f" "$app" "$rep" "$cold_ms" "$idle_cur" "$idle_anon" "$peak" "$cg_peak" "$http_json" "$cable_json" "$upload_json" "$load_start" "$(cat /proc/loadavg)" "$extras"
+  docker rm -f "$CONTAINER" >/dev/null
+  rm -rf "$WORK/$app"
+  log "$app rep $rep: done -> $f"
+  ACTIVE_APP="" # PATCH: a completed checkpoint is not a failed attempt.
+}
+
+# PATCH: every target's identity, recorded before the first run: the image (ID, digests, creation, size, labels), the
+# commit it was built from (org.opencontainers.image.revision, else GIT_REVISION) and, for .NET, how the image runs
+# the code (a Native AOT binary, or the runtime with its runtimeconfig.json: tiered compilation, PGO, GC settings).
+record_identity() {
+  local app base image seen=" " runtimeconfig
+  local items=()
+  for app in ${APPS//,/ }; do
+    base=$(base_app "$app"); [[ "$seen" = *" $base "* ]] && continue; seen="$seen$base "
+    image=$(image_for "$app")
+    runtimeconfig=""
+    if [[ "$base" = dotnet* ]]; then
+      runtimeconfig=$(docker run --rm --name "$CONTAINER_PREFIX-inspect-$PORT" --label "bench.owner=$BENCH_OWNER" --entrypoint sh "$image" \
+        -c 'if [ -f /app/campfire.runtimeconfig.json ]; then cat /app/campfire.runtimeconfig.json; else echo "{\"native_aot\": $( [ -x /app/campfire ] && echo true || echo false )}"; fi' 2>/dev/null || echo '{}')
+    fi
+    items+=("$base" "$image" "$(docker image inspect "$image")" "${runtimeconfig:-null}")
+  done
+  python3 - "$OUT/identity.json" "${items[@]}" <<'PY'
+import json, sys
+NOTES = {
+  "reference": "Rails at the pinned commit: Puma, Resque, Redis and Thruster",
+  "rust": "the Rust port at its parity commit: one process with its own front server in place of Thruster",
+  "rust-v0.1.1": "DIVERGED from Rails (plan v3 section 10): no CSRF tokens, cached page parts, the extra index, "
+                 "compressed cable frames shared across subscribers (permessage-deflate), cookies sent only when they "
+                 "change, and the leaner media build",
+  "dotnet": "the .NET port behind Thruster",
+  "dotnet-aot": "the .NET port, Native AOT; inspect the pinned artifact for its front-server architecture",
+  "dotnet-jit": "the .NET port on the ASP.NET Core runtime (ReadyToRun, tiered JIT)",
+  "rust-main": "pinned Rust main; generation-versioned whole-response cache, tokenless pages and spliced gzip",
+  "c": "pinned C port; one process, generation-versioned whole-response cache",
+}
+out, args, identity = sys.argv[1], sys.argv[2:], {}
+for i in range(0, len(args), 4):
+    base, image, inspect, runtimeconfig = args[i], args[i + 1], json.loads(args[i + 2])[0], json.loads(args[i + 3])
+    config = inspect.get("Config") or {}
+    labels = config.get("Labels") or {}
+    env = dict(e.split("=", 1) for e in config.get("Env") or [] if "=" in e)
+    # The revision label is what bench/images sets. Without it only the reference's GIT_REVISION names its own commit:
+    # parity/bin/candidate passed the Rails commit as GIT_REVISION to the port images it built.
+    label = labels.get("org.opencontainers.image.revision")
+    own = label or (env.get("GIT_REVISION") if base == "reference" else None)
+    entry = {
+      "image": image, "id": inspect.get("Id"), "digests": inspect.get("RepoDigests") or [], "created": inspect.get("Created"),
+      "size_bytes": inspect.get("Size"),
+      "revision": own,
+      "revision_source": "label" if label else "GIT_REVISION" if own else "unknown: no org.opencontainers.image.revision label (bench/images sets it)",
+      "git_revision_env": env.get("GIT_REVISION"),
+      "version": labels.get("org.opencontainers.image.version") or env.get("APP_VERSION"),
+      "note": NOTES.get(base, ""),
+    }
+    if runtimeconfig is not None:
+        props = (runtimeconfig.get("runtimeOptions") or {}).get("configProperties") or {}
+        aot = runtimeconfig.get("native_aot") is True
+        entry["dotnet"] = {
+          "build": "Native AOT" if aot else "JIT (ReadyToRun, tiered compilation)",
+          "config_properties": props,
+          "server_gc": props.get("System.GC.Server"),
+          "concurrent_gc": props.get("System.GC.Concurrent"),
+          "tiered_compilation": None if aot else props.get("System.Runtime.TieredCompilation", "default (on)"),
+          "tiered_pgo": None if aot else props.get("System.Runtime.TieredPGO", "default (on)"),
+          "image_dotnet_env": {k: v for k, v in env.items() if k.startswith("DOTNET_")},
+        }
+    identity[base] = entry
+json.dump(identity, open(out, "w"), indent=1)
+PY
+}
+
+{
+  echo "date: $(date -Is)"
+  echo "host: $(uname -r), $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs), $(nproc) threads, $(free -g | awk '/Mem:/{print $2}')GB"
+  echo "server cpus: $SERVER_CPUS (nproc $(taskset -c "$SERVER_CPUS" nproc)); loadgen cpus: $LOADGEN_CPUS; network: $NETWORK"
+  echo "env: $(env_args | grep -E 'WEB_CONC|JOB_CONC|MAX_THREADS' | tr '\n' ' ')"
+  echo "rust extra env: $RUST_EXTRA_ENV"
+  echo "dotnet extra env: $(env_args dotnet | grep '^DOTNET_' | tr '\n' ' ')" # PATCH: dotnet
+  for app in ${APPS//,/ }; do echo "$app image: $(image_for "$app") $(docker image inspect -f '{{.Id}} {{.Created}}' "$(image_for "$app")")"; done
+  # PATCH: the harness's own commit (this repository), the seed and the knobs that shape every suite.
+  echo "harness HEAD: $(git -C "$ROOT" rev-parse --short HEAD) (dirty: $(git -C "$ROOT" status --porcelain -- bench | wc -l) files under bench/)"
+  echo "seed: $SEED_NAME ($SEED, db sha256 $(sha256sum "$SEED/db/production.sqlite3" | cut -c1-16))"
+  echo "suites: $SUITES; http routes: $HTTP_ROUTES; http concs: $HTTP_CONCS; http secs: $HTTP_SECS; warm-up: ${WARMUP_SECS}s at c=$WARMUP_CONC per route"
+  echo "response-cache profile: $RESPONSE_CACHE_PROFILE"
+  if [ "$RESPONSE_CACHE_PROFILE" != ordinary ]; then
+    echo "response-cache generator: $(sha256sum "$RESPONSE_CACHE_LOAD_BIN" "$(dirname "$RESPONSE_CACHE_LOAD_BIN")/ResponseCacheLoad.dll")"
+  fi
+  echo "cable clients: $CABLE_CLIENTS; tput secs: $CABLE_TPUT_SECS; posters: $CABLE_POSTERS; paced messages: $CABLE_LATENCY_MSGS"
+  echo "validation: every response's status and headers, every ${VALIDATE_EVERY}th body per connection; every cable delivery"
+  echo "container RLIMIT_NOFILE: $CONTAINER_NOFILE; loadgen ulimit -n: $(ulimit -n); reference Redis port: $([ "$NETWORK" = host ] && echo "$REDIS_PORT" || echo 6379)"
+  echo "counters (-counters apps): $COUNTERS_CONFIG; buffer MB (hex): $COUNTERS_BUFFER_MB"
+  for app in ${APPS//,/ }; do # PATCH: profile-method changes invalidate counter-suite checkpoints only.
+    if has_mod "$app" counters; then echo "counter output streaming: $COUNTERS_STREAMING"; break; fi
+  done
+} > "$OUT/env-next.txt"
+# PATCH: preserve original metadata and refuse incompatible resumed observations.
+if [ "${RESUME_COMPLETED:-0}" = 1 ] && [ -f "$OUT/env.txt" ]; then
+  if ! cmp -s <(sed '/^date:/d; /^harness HEAD:/d' "$OUT/env.txt") <(sed '/^date:/d; /^harness HEAD:/d' "$OUT/env-next.txt"); then
+    log "resume settings differ from env.txt; refusing to combine measurements (see env-next.txt)"
+    exit 1
+  fi
+  cp "$OUT/env-next.txt" "$OUT/env-resume.txt"
+else
+  mv "$OUT/env-next.txt" "$OUT/env.txt"
+fi
+cat "$OUT/env.txt" >&2
+if ! suite fill && { [ "${RESUME_COMPLETED:-0}" != 1 ] || [ ! -f "$OUT/identity.json" ]; }; then record_identity; fi # PATCH
+
+ORDER=(${APPS//,/ })
+for rep in $(seq 1 "$REPS"); do
+  apps=("${ORDER[@]}")
+  if [ $((rep % 2)) -eq 0 ]; then apps=(); for ((i = ${#ORDER[@]} - 1; i >= 0; i--)); do apps+=("${ORDER[$i]}"); done; fi
+  for app in "${apps[@]}"; do
+    echo "$(date +%T) $app rep $rep start: $(uptime)" >> "$OUT/uptime.log"
+    run_rep "$app" "$rep"
+    echo "$(date +%T) $app rep $rep end:   $(uptime)" >> "$OUT/uptime.log"
+  done
+done
+suite fill && exit 0 # PATCH: a fill leaves storage, not results
+"$BENCH/report" "$OUT" | tee "$OUT/report.md"

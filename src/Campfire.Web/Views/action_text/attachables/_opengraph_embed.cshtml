@@ -1,0 +1,21 @@
+@inherits RazorSlice<OpengraphEmbedPartial>
+@{ var embed = Model.OpengraphEmbed; }
+<figure class="attachment attachment--content attachment--og">
+  <actiontext-opengraph-embed>
+    <div class="og-embed gap @(embed.TwitterAvatar ? "og-embed--twitter-avatar" : "")">
+      <div class="og-embed__content">
+        <div class="og-embed__title">
+          @LinkToIf(!string.IsNullOrWhiteSpace(embed.Href), RubyText.Truncate(embed.Filename, 280, "…"), embed.Href, Attributes().Attribute("rel", "noreferrer")
+              .Target("_blank"))
+        </div>
+        <div class="og-embed__description">@RubyText.Truncate(embed.Description ?? string.Empty, 560, "…")</div>
+      </div>
+      @if (embed.Url is { } url)
+      {
+        <div class="og-embed__image">
+          @BuilderTag("img", Attributes().Attribute("src", url).Class("image center").Alt(""))
+        </div>
+      }
+    </div>
+  </actiontext-opengraph-embed>
+</figure>

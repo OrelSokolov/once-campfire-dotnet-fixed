@@ -1,0 +1,76 @@
+@inherits RazorLayoutSlice<LayoutModel>
+@{ var viewContext = Model.ViewContext; }
+<!DOCTYPE html>
+<html>
+  <head>
+    @PageTitleTag(Model.PageTitle)
+
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, interactive-widget=resizes-content">
+    <meta name="view-transition" content="same-origin">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    @CsrfMetaTags(viewContext)
+    @CspMetaTag()
+    @CurrentUserMetaTags(viewContext)
+    @ScriptAwareActionCableMetaTag(viewContext)
+
+    @BuilderTag("meta", Attributes().Name("vapid-public-key").Attribute("content", viewContext.VapidPublicKey))
+    @BuilderTag("meta", Attributes().Name("turbo-prefetch").Attribute("content", "true"))
+
+    @BuilderTag("link", Attributes().Attribute("rel", "manifest").Attribute("href", Routes.WithFormat(Routes.Webmanifest, "json")))
+    @BuilderTag("link", Attributes().Attribute("rel", "icon").Attribute("href", viewContext.Account.LogoPath).Type("image/png"))
+    @BuilderTag("link", Attributes().Attribute("rel", "apple-touch-icon").Attribute("href", viewContext.Account.LogoPath))
+
+    @viewContext.Assets.StylesheetTags
+    @CustomStylesTag(viewContext)
+
+    @viewContext.Assets.ImportmapTags
+
+    @await RenderSectionAsync(ContentFor.Head)
+  </head>
+
+  <body class="@BodyClasses(viewContext, Model.BodyClass)" data-controller="local-time lightbox">
+    <a href="#main-content" class="skip-navigation btn">Skip to main content</a>
+
+    <nav id="nav">
+      @await RenderSectionAsync(ContentFor.Nav)
+    </nav>
+
+    @if ((viewContext.FlashNotice ?? viewContext.FlashAlert) is { } notice)
+    {
+      <div class="flash" data-controller="element-removal" data-action="animationend->element-removal#remove">
+        <div class="flash__inner shadow" style="@(viewContext.FlashAlert is not null ? "--flash-background: var(--color-negative)" : "")">
+          @if (viewContext.FlashAlert is not null)
+          {
+@:            @ImageTag(viewContext, "alert.svg", Attributes().Aria("hidden", true).Size(24).Class("colorize--white"))</span>
+          }
+          else
+          {
+@:            @ImageTag(viewContext, "check.svg", Attributes().Aria("hidden", true).Size(24).Class("colorize--white"))</span>
+          }
+        </div>
+        <span class="for-screen-reader" role="alert" aria-atomic="true">@notice</span>
+      </div>
+    }
+
+    <main id="main-content">
+      @await RenderBodyAsync()
+
+      <footer id="footer">
+        @await RenderSectionAsync(ContentFor.Footer)
+      </footer>
+    </main>
+
+    <aside id="sidebar" data-controller="toggle-class" data-toggle-class-toggle-class="open">
+      @await RenderSectionAsync(ContentFor.Sidebar)
+    </aside>
+
+    @await RenderPartialAsync(Views.layouts._lightbox.Create(new ContextPartial(viewContext)))
+
+    <a href="https://once.com" id="app-logo" target="_blank" aria-label="Once software from 37signals home page">
+      @ImageTag(viewContext, "campfire-icon.png", Attributes().Alt("Campfire logo").Attribute("width", 256).Attribute("height", 216))
+    </a>
+  </body>
+</html>

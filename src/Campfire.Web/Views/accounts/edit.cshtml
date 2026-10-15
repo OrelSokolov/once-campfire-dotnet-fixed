@@ -1,0 +1,143 @@
+@inherits PageSlice<AccountEditPage>
+@{
+    var action = Routes.Account;
+    FormWith AccountForm( ) => FormWith(ViewContext, action).Model(ParamNames.Accounts.Key).Method("patch").Data("controller", "form");
+    var restricted = Model.RestrictRoomCreationToAdministrators;
+}
+
+
+<section class="panel txt-align-center flex flex-column gap" style="view-transition-name: account-settings">
+  @if (ViewContext.CanAdminister)
+  {
+      var logoForm = AccountForm().Class("txt--medium").Multipart();
+      var imageForm = AccountForm().Multipart();
+      var nameForm = AccountForm().Class("flex flex-column gap");
+      var settingsForm = FormWith(ViewContext, action).Model(ParamNames.Accounts.Key).Method("put").Data("controller", "form")
+          .Class("flex align-center gap center");
+    <div class="align-center center avatar__form gap" data-controller="upload-preview">
+      @logoForm.Open()
+        <label class="btn input--file">
+          @ImageTag(ViewContext, "camera.svg", Attributes().AriaHidden().Size(20))
+          @logoForm.FileField(ParamNames.Accounts.Logo, Attributes().Class("input").Accept("image/*")
+              .Data("action", "upload-preview#previewImage change->form#submit"))
+          <span class="for-screen-reader">Upload logo</span>
+        </label>
+@Raw("</form>")
+      @imageForm.Open()
+        <label class="btn avatar input--file account-logo txt-xx-large">
+          @ImageTag(ViewContext, ViewContext.Account.LogoPath, Attributes().Role("presentation").Size(48).Data("upload_preview_target", "image"))
+          @imageForm.FileField(ParamNames.Accounts.Logo, Attributes().Class("input").Accept("image/*")
+              .Data("action", "upload-preview#previewImage change->form#submit"))
+          <span class="for-screen-reader">Upload logo</span>
+        </label>
+@Raw("</form>")
+      @if (ViewContext.Account.HasLogo)
+      {
+          var button = ButtonTo(ViewContext, ViewContext.Account.LogoPath, Attributes().Method("delete")
+              .Class("btn btn--negative txt-small avatar__delete-btn"));
+@:        @button.Open
+@:          @ImageTag(ViewContext, "minus.svg", Attributes().AriaHidden().Size(20))
+          <span class="for-screen-reader">Delete logo</span>
+          @button.Close
+      }
+    </div>
+@:
+@:    @nameForm.Open()
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "account_name")
+
+        <label class="flex align-center gap flex-item-grow">
+          @nameForm.TextField(ParamNames.Accounts.Name, ViewContext.Account.Name, Attributes().Class("input txt-large").Autocomplete("off")
+              .Placeholder("Name this account").Autofocus().Data("action", "keydown.enter->form#submit"))
+        </label>
+
+        @nameForm.ButtonOpen(Attributes().Class("btn btn--reversed center").Type("submit"))
+          @ImageTag(ViewContext, "check.svg", Attributes().AriaHidden().Size(20))
+          <span class="for-screen-reader">Save changes</span>
+@Raw("</button>")      </div>
+      @Raw("</form>")
+@:
+    <div class="margin-block-start pad-block pad-inline-double fill-shade border-radius">
+      @settingsForm.Open()
+        <div class="flex-item-grow flex align-center gap txt-align-start">
+          @ImageTag(ViewContext, "crown.svg", Attributes().Class("colorize--black").AriaHidden().Size(18)) Must be admin to create new rooms
+        </div>
+        @Raw("")
+          @settingsForm.FieldsFor(ParamNames.Accounts.Settings).HiddenField(ParamNames.Accounts.RestrictRoomCreationToAdministrators, null, Attributes()
+              .Value(!restricted))
+
+        <label class="switch">
+          <input type="checkbox"
+                class="switch__input"
+                @(restricted ? "checked" : "")
+                data-action="change->form#submit">
+          <span class="switch__btn round"></span>
+          <span class="for-screen-reader">
+            Must be admin to create new rooms
+          </span>
+        </label>
+
+@Raw("</form>")    </div>
+  }
+  else
+  {
+@:    @AccountLogoTag(ViewContext, "txt-xx-large center")
+    <h1 class="flex-item-grow txt-x-large">@ViewContext.Account.Name</h1>
+  }
+
+  <div class="margin-block pad-inline pad-block-start fill-shade border-radius">
+    @await Partial(Views.accounts._invite.Create(new InvitePartial(ViewContext, Model.JoinCode)))
+
+    <hr class="margin-block separator full-width" style="--border-style: solid">
+
+    <menu class="flex flex-column gap margin-none pad">
+      <turbo-frame id="@DomIds.AccountUsers">
+        @await Each(Model.Administrators, user => Partial(Views.accounts.users._user.Create(new AccountUserPartial(ViewContext, user))))
+
+        @if (Model.Administrators.Count > 0 && Model.Members.Count > 0)
+        {
+          <hr class="separator full-width" style="--border-style: solid">
+        }
+
+        @await Each(Model.Members, user => Partial(Views.accounts.users._user.Create(new AccountUserPartial(ViewContext, user))))
+        @(Model.NextPage is { } page ? await Partial(Views.accounts.users._next_page_container.Create(new NextPageContainerPartial(ViewContext, page)))
+            : HtmlString.Empty)
+      </turbo-frame>
+    </menu>
+  </div>
+</section>
+
+@functions {
+    protected override string? PageTitle => "Account settings";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        switch ( sectionName )
+        {
+            case ContentFor.Nav:
+  <div class="flex-item-justify-start">
+    @LinkBackToLastRoomVisited(ViewContext)
+  </div>
+@:
+                if ( ViewContext.CanAdminister )
+                {
+    <div class="flex align-center gap flex-item-justify-end">
+      @LinkToOpen(Routes.AccountBots, Attributes().Class("btn").Style("view-transition-name: chat-bots"))
+        @ImageTag(ViewContext, "bot.svg", Attributes().AriaHidden().Size(20))
+        <span class="for-screen-reader">Set up chat bots</span>
+@Raw("</a>")
+      @LinkToOpen(Routes.EditAccountCustomStyles, Attributes().Class("btn").Style("view-transition-name: custom-styles"))
+        @ImageTag(ViewContext, "art.svg", Attributes().Size(20).AriaHidden())
+        <span class="for-screen-reader">Custom styles</span>
+@Raw("</a>")    </div>
+                }
+
+                break;
+            case ContentFor.Footer:
+  <div class="txt-align-center center margin-block-double txt-subtle">Campfire&trade; version @VersionBadge(ViewContext)</div>
+                break;
+        }
+
+        return Task.CompletedTask;
+    }
+}

@@ -1,0 +1,18 @@
+@inherits ViewSlice<BanButtonPartial>
+@{ var user = Model.User; }
+@if (user.Active)
+{
+    var button = ButtonTo(ViewContext, Routes.UserBan(user.Id), Attributes().Method("post").Class("btn full-width").Data("turbo_confirm", "Are you sure you want to ban this user? This will log them out, delete their messages, and block their IP addresses."));
+@:  @button.Open
+@:    @ImageTag(ViewContext, "cancel.svg", Attributes().Aria("hidden", "true").Aria("label", $"Ban {user.Name}"))
+    <span>Ban @user.Name</span>
+    @button.Close
+}
+else
+{
+    var button = ButtonTo(ViewContext, Routes.UserBan(user.Id), Attributes().Method("delete").Class("btn btn--negative full-width").Data("turbo_confirm", "Are you sure you want to remove the ban on this user?"));
+@:  @button.Open
+@:    @ImageTag(ViewContext, "cancel.svg", Attributes().Aria("hidden", "true").Aria("label", $"Remove Ban {user.Name}"))
+    <span>Remove ban</span>
+    @button.Close
+}

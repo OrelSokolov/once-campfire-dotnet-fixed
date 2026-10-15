@@ -1,0 +1,38 @@
+@inherits ViewSlice<SidebarDirectPartial>
+@* Rails wraps this in `cache membership do` (see Caching.FragmentKeys.SidebarDirect) and assigns `members` on lines Erubi drops, leaving the blank line below. *@
+@{ var membership = Model.Membership; var members = membership.Members; var many = members.Count > 1; }
+
+  @LinkToRoomOpen(membership.RoomId, Attributes().Class(TokenList(("direct", true), ("unread", membership.Unread)))
+      .Id(DomIds.RoomListItem(RoomKind.Direct, membership.RoomId)).Data("sorted_list_number", membership.UpdatedAtEpoch))
+    @if (many)
+    {
+      <div class="avatar__group">
+        @foreach (var member in members.Take(4))
+        {
+          <span class="avatar">
+            @ImageTag(ViewContext, member.AvatarPath, Attributes().Size(20).AriaHidden())
+          </span>
+        }
+      </div>
+    }
+    else
+    {
+      <span class="avatar">
+        @ImageTag(ViewContext, members[0].AvatarPath, Attributes().Size(48).AriaHidden())
+      </span>
+    }
+
+    <span class="direct__author flex align-center gap max-width min-width border-radius txt-small">
+      <span class="txt-nowrap overflow-ellipsis">
+        <span class="for-screen-reader">Ping with</span>
+        @if (many)
+        {
+@:          @DirectMemberInitials(members)
+        }
+        else
+        {
+@:          @members[0].FirstName
+        }
+      </span>
+    </span>
+@{ WriteLiteral("</a>"); }

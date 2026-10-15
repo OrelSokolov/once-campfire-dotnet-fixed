@@ -1,0 +1,40 @@
+@inherits ViewSlice<RoomFormLayout>
+@* `render layout: "rooms/layouts/form", locals: { room: } do ... end`: Model.Body writes the block where the ERB yields. *@
+@{
+    var room = Model.Room;
+    var action = (room.Id, Model.Kind) switch
+    {
+        (long id, RoomKind.Open) => Routes.RoomsOpen(id),
+        (long id, _) => Routes.RoomsClosed(id),
+        (null, RoomKind.Open) => Routes.RoomsOpens,
+        _ => Routes.RoomsCloseds,
+    };
+    var form = FormWith(ViewContext, action).Model(Model.Kind.ParamKey()).Method(room.Id is null ? "post" : "patch");
+}
+@form.Open()
+  <div class="flex align-center gap">
+    @if (Model.CanAdminister)
+    {
+@:      @TranslationButton(ViewContext, "room_name")
+@:
+      <label class="flex-item-grow txt-large">
+        @form.TextField(ParamNames.Rooms.Name, room.Name, Attributes().Name(ParamNames.Rooms.NameField).Id("room_name").Class("input full-width").Required().Autofocus().Placeholder("Name the room").Data("turbo_permanent", true).Data("action", "keydown.enter->form#submit:prevent"))
+        <span class="for-screen-reader">Name this room</span>
+      </label>
+    }
+    else
+    {
+      <h1 class="flex-item-grow txt-x-large">
+        @room.Name
+      </h1>
+    }
+  </div>
+
+  <hr class="margin-block borderless">
+
+  <section class="room-access margin-block pad-inline fill-shade border-radius">
+    @await Yield(Model.Body)
+  </section>
+
+  @(Model.CanAdminister ? SubmitRoomButtonTag(ViewContext) : SafeHtml.Empty)
+@{ WriteLiteral("</form>"); }

@@ -1,0 +1,24 @@
+@inherits PageSlice<BotsNewPage>
+@* accounts/bots/new.html.erb: a proxy named `new` doesn't compile, so the file keeps its format suffix. *@
+@{ var form = FormWith(ViewContext, Routes.AccountBots).Model(ParamNames.Users.Key).Class("flex flex-column gap").Multipart(); }
+
+
+<section class="panel">
+  @form.Open()
+    @await Partial(Views.accounts.bots._form.Create(new BotFormPartial(ViewContext, form, Model.Bot)))
+</form></section>
+@functions {
+    protected override string? PageTitle => "New chat bot";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackTo(ViewContext, Routes.AccountBots)
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

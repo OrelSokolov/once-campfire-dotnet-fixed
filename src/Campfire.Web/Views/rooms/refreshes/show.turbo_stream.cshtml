@@ -1,0 +1,14 @@
+@inherits ViewSlice<RoomsRefreshTurboStreamPage>
+@* The append (when there are new messages), the blank line between the two blocks (an empty refresh is "\n", which Rack::ETag digests), then one indented line per replace. *@
+@if (Model.NewMessages.Count > 0)
+{
+    @TurboStreamOpen(TurboStreamActions.Append, DomIds.RoomMessages(Model.RoomKind, Model.RoomId))
+@:
+@:  @await Each(Model.NewMessages, RenderMessage)
+    @TurboStreamClose()
+}
+
+@foreach (var message in Model.UpdatedMessages)
+{
+@:  @TurboStreamOpen(TurboStreamActions.Replace, message.DomId())@(await RenderMessage(message))@TurboStreamClose()
+}

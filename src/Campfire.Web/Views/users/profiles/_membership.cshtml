@@ -1,0 +1,13 @@
+@inherits ViewSlice<ProfileMembershipPartial>
+@{ var membership = Model.Membership; }
+<li class="flex align-center gap margin-none min-width membership-item">
+  @LinkToOpen(Routes.Room(membership.RoomId), Attributes().Class("overflow-ellipsis fill-shade txt-primary txt-undecorated"))
+    <strong>@membership.RoomDisplayName</strong>
+</a>
+  <hr class="separator" aria-hidden="true">
+
+  <span class="txt-small">
+    @TurboFrameTagOpen(DomIds.RoomInvolvementFrame(membership.RoomKind, membership.RoomId))
+      @ButtonToChangeInvolvement(ViewContext, membership.RoomId, membership.RoomKind, membership.Involvement)
+</turbo-frame>  </span>
+</li>

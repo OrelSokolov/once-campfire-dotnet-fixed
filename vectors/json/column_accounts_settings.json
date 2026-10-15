@@ -1,0 +1,6 @@
+{
+  "seeded": "{\"restrict_room_creation_to_administrators\":false}",
+  "accessor_true": "{\"restrict_room_creation_to_administrators\":true}",
+  "hash_string_zero": "{\"restrict_room_creation_to_administrators\":false}",
+  "created_untouched": "{\"restrict_room_creation_to_administrators\":false}"
+}

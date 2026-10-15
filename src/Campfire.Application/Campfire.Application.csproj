@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      The app ships as Native AOT (docs/development.md): the trim, single-file and AOT analyzers run on this library, and
+      their warnings are errors, as everywhere.
+    -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- Restore for the published runtimes too (Campfire.Web's), so a `publish -r linux-x64` or `-r linux-arm64` leaves
+         the lock file as locked restore wants it. -->
+    <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+    <!-- Dapper.AOT generates its interceptors in the Dapper.AOT namespace; the compiler needs the opt-in. -->
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Dapper.AOT</InterceptorsNamespaces>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Dapper.AOT" />
+    <PackageReference Include="AngleSharp" />
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" />
+    <PackageReference Include="NetVips" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The checked-in schema, applied to an empty database at boot. -->
+    <EmbeddedResource Include="..\..\schema.sql" LogicalName="Campfire.Application.Data.schema.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Campfire.Application.Tests" />
+    <InternalsVisibleTo Include="Campfire.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

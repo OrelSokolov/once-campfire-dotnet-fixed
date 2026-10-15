@@ -1,0 +1,7 @@
+@inherits ViewSlice<ClosedRoomFormPage>
+@implements IUsesLayout<Views.rooms.layouts._edit, RoomPageLayout>
+
+  @await Partial(Views.rooms.closeds._form.Create(new ClosedRoomFormPartial(ViewContext, Model, Routes.EditRoomsOpen(Model.Room.Id ?? 0))))
+@functions {
+    public RoomPageLayout LayoutModel => new( ViewContext, Model.Room, Model.CanAdminister );
+}

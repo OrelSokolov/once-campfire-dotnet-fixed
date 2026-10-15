@@ -1,0 +1,12 @@
+@inherits ViewSlice<PromptItemPartial>
+<lexxy-prompt-item search="@Model.User.User.Name" sgid="@Model.User.AttachableSignedGlobalId">
+  <template type="menu">
+    <span class="autocomplete__item flex align-center gap unpad">
+      @AvatarTag(ViewContext, Model.User.User)
+      <span class="autocompletable__name">@Model.User.User.Name</span>
+    </span>
+  </template>
+  <template type="editor">
+    @await Partial(Views.users._mention.Create(new MentionPartial(ViewContext, Model.User)))
+  </template>
+</lexxy-prompt-item>

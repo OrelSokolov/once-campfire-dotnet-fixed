@@ -1,0 +1,33 @@
+<Project>
+
+  <PropertyGroup>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Data: explicit SQL over the existing Campfire schema on Microsoft.Data.Sqlite (docs/development.md). -->
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="11.0.0-rc.2.26504.105" />
+    <!--
+      Dapper supplies the call surface (Query<T>, Execute, ...); Dapper.AOT's source generator intercepts every call
+      site at build time with generated binders and readers, so no reflection or Reflection.Emit runs under Native AOT
+      (docs/development.md). Enabled by [module: DapperAot] plus the Dapper.AOT interceptors namespace.
+    -->
+    <PackageVersion Include="Dapper" Version="2.1.89" />
+    <PackageVersion Include="Dapper.AOT" Version="1.1.0" />
+    <!-- Rich text: an inert HTML5 parser under Campfire-owned filters. -->
+    <PackageVersion Include="AngleSharp" Version="1.8.2" />
+    <!-- Identity V3 password hashing. -->
+    <PackageVersion Include="Microsoft.Extensions.Identity.Core" Version="11.0.0-rc.2.26504.105" />
+    <!-- Media: the libvips 8.16 binding line, without NetVips.Native. -->
+    <PackageVersion Include="NetVips" Version="3.0.1" />
+    <!-- HTML templates without MVC. -->
+    <PackageVersion Include="RazorSlices" Version="0.12.1" />
+    <PackageVersion Include="System.IO.Hashing" Version="11.0.0-rc.2.26504.105" />
+    <!-- Tests. -->
+    <PackageVersion Include="xunit.v3" Version="4.0.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.2.26504.105" />
+    <!-- Offline benchmark trace analysis only; not referenced by the application. -->
+    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
+  </ItemGroup>
+
+</Project>

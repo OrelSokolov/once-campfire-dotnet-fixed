@@ -1,0 +1,2 @@
+@inherits ViewSlice<MessagesCreateTurboStreamPage>
+@TurboStreamOpen(TurboStreamActions.Append, DomIds.RoomMessages(Model.RoomKind, Model.Message.RoomId))@(await RenderMessage(Model.Message))@TurboStreamClose()

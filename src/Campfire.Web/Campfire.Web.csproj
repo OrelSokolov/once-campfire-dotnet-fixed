@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <AssemblyName>campfire</AssemblyName>
+    <RootNamespace>Campfire.Web</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- The app ships as a Native AOT binary (docs/development.md): `dotnet publish -r <rid>`
+         compiles it, and every build runs the trim, AOT and single-file analyzers over this project. The JIT
+         build of the same code publishes with -p:PublishAot=false. -->
+    <PublishAot>true</PublishAot>
+    <!-- Prefer execution speed for AOT; the JIT target publishes the same source without this setting. -->
+    <OptimizationPreference Condition="'$(PublishAot)' == 'true' and '$(OptimizationPreference)' == ''">Speed</OptimizationPreference>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- On by default only with PublishAot: keep configuration binding source-generated in the JIT build too, so
+         both builds run the same code. -->
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+    <!-- Linux only: RID-specific publishing carries one platform's native libraries.
+         List both identifiers so locked restore contains both dependency graphs. -->
+    <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- RazorSlices: the Rails HTML encoder overrides HtmlEncoder's pointer-based members. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- RazorSlices names each proxy type after its file, and the views mirror the ERB file names
+         (show, edit, index), which are lower-case identifiers (CS8981). -->
+    <NoWarn>$(NoWarn);CS8981</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Use the measured ThreadPool semaphore spin limit for both publish targets. -->
+    <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.UnfairSemaphoreSpinLimit" Value="256" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RazorSlices" />
+    <PackageReference Include="System.IO.Hashing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Campfire.Application\Campfire.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Campfire.Web.Tests" />
+    <InternalsVisibleTo Include="Campfire.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

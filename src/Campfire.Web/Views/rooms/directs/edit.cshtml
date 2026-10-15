@@ -1,0 +1,38 @@
+@inherits PageSlice<DirectsEditPage>
+@{ var button = ButtonTo(ViewContext, ViewContext.Url(Routes.RoomsDirect(Model.RoomId)), Attributes().Method("delete").Class("btn btn--negative center")
+    .Aria("label", "Delete Ping").Data("turbo_confirm", "Are you sure you want to delete this ping and all messages in it? This can’t be undone.")); }
+
+
+<div class="panel txt-align-center">
+  <section class="directs--edit margin-block-end">
+    @foreach (var user in Model.Users)
+    {
+      <div class="member flex flex-column gap fill-shade pad border-radius">
+        <figure class="avatar center" style="--avatar-border-radius: 10ch; --avatar-size: 10ch;" >
+          @AvatarTag(ViewContext, user, Attributes().Loading("lazy"))
+        </figure>
+
+        <strong>@user.Name</strong>
+      </div>
+    }
+  </section>
+
+  @button.Open
+    @ImageTag(ViewContext, "trash.svg", Attributes().AriaHidden())
+    Ping
+@button.Close</div>
+@functions {
+    protected override string? PageTitle => $"Edit settings for {Model.DisplayName}";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackToLastRoomVisited(ViewContext)
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

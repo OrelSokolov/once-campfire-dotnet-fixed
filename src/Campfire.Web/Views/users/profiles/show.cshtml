@@ -1,0 +1,138 @@
+@inherits PageSlice<ProfilePage>
+@{
+    var user = Model.User;
+    FormWith ProfileFormWith( ) => FormWith(ViewContext, Routes.UserProfile).Model(ParamNames.Users.Key).Method("patch").Data("controller", "form");
+    var logoForm = ProfileFormWith().Class("txt-medium").Multipart();
+    var avatarForm = ProfileFormWith().Multipart();
+    var form = ProfileFormWith();
+}
+
+
+<section class="panel flex flex-column gap" style="view-transition-name: avatar-@user.Id">
+  @await Partial(Views.pwa._install_instructions.Create(new ContextPartial(ViewContext)))
+
+  <div class="align-center center avatar__form gap" data-controller="upload-preview">
+    @logoForm.Open()
+      <label class="btn input--file">
+        @ImageTag(ViewContext, "camera.svg", Attributes().AriaHidden().Size(20))
+        @logoForm.FileField(ParamNames.Users.Avatar, Attributes().Id("file").Class("input").Accept("image/*").Data("upload_preview_target", "input")
+            .Data("action", "upload-preview#previewImage change->form#submit"))
+        <span class="for-screen-reader">Upload avatar</span>
+      </label>
+</form>
+    @avatarForm.Open()
+      <label class="btn avatar input--file txt-xx-large">
+        @ImageTag(ViewContext, user.AvatarPath, Attributes().AriaHidden().Size(300).Data("upload_preview_target", "image"))
+        @avatarForm.FileField(ParamNames.Users.Avatar, Attributes().Id("file").Class("input").Accept("image/*").Data("upload_preview_target", "input")
+            .Data("action", "upload-preview#previewImage change->form#submit"))
+        <span class="for-screen-reader">Avatar</span>
+      </label>
+</form>
+    @if (Model.AvatarAttached)
+    {
+        var button = ButtonTo(ViewContext, Routes.UserAvatar(user.Id), Attributes().Method("delete").Class("btn btn--negative txt-small avatar__delete-btn"));
+@:      @button.Open
+@:        @ImageTag(ViewContext, "minus.svg", Attributes().AriaHidden().Size(20))
+        <span class="for-screen-reader">Delete avatar</span>
+        @button.Close
+    }
+  </div>
+
+  @form.Open()
+    <div class="flex flex-column gap">
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "user_name")
+
+        <label class="flex align-center gap flex-item-grow input input--actor">
+          @form.TextField(ParamNames.Users.Name, user.Name, Attributes().Class("input txt-large ").Autocomplete("name").Placeholder("Enter your name")
+              .Autofocus().Required().Data("1p-ignore", true))
+          @ImageTag(ViewContext, "person.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "email_address")
+
+        <label class="flex align-center gap flex-item-grow input input--actor">
+          @form.EmailField(ParamNames.Users.EmailAddress, user.EmailAddress, Attributes().Class("input txt-large").Value(user.EmailAddress)
+              .Autocomplete("username").Placeholder("Enter your email address").Required(false))
+          @ImageTag(ViewContext, "email.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      <div class="flex align-center gap">
+        @TranslationButton(ViewContext, "update_password")
+
+        <label class="flex align-center gap flex-item-grow input input--actor">
+          @form.PasswordField(ParamNames.Users.Password, Attributes().Class("input txt-large").Autocomplete("new-password").Placeholder("Change password")
+              .Required(false).Maxlength(72))
+          @ImageTag(ViewContext, "password.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      <div class="flex align-start gap">
+        @TranslationButton(ViewContext, "bio")
+
+        <label class="flex align--center gap flex-item--grow input input--actor">
+          @form.TextArea(ParamNames.Users.Bio, user.Bio, Attributes().Class("input txt-large").Placeholder("A few words about yourself…").Maxlength(200).Rows(3)
+              .Required(false))
+          @ImageTag(ViewContext, "bio.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+        </label>
+      </div>
+
+      @ProfileFormSubmitButton(ViewContext)
+    </div>
+</form>
+  <div class="margin-block pad-inline pad-block fill-shade border-radius">
+    <menu class="flex flex-column gap margin-none pad">
+      @await Each(Model.SharedMemberships,
+          membership => Partial(Views.users.profiles._membership.Create(new ProfileMembershipPartial(ViewContext, membership))))
+
+      @if (Model.DirectMemberships.Count > 0 && Model.SharedMemberships.Count > 0)
+      {
+        <hr class="separator full-width" style="--border-style: solid">
+      }
+
+      @await Each(Model.DirectMemberships,
+          membership => Partial(Views.users.profiles._membership.Create(new ProfileMembershipPartial(ViewContext, membership))))
+    </menu>
+  </div>
+
+  @await Partial(Views.users.profiles._transfer.Create(new TransferPartial(ViewContext, user, Model.TransferId)))
+
+  @if (Model.Development)
+  {
+    <fieldset>
+      <legend>
+        @ImageTag(ViewContext, "key.svg", Attributes().AriaHidden().Size(36).Class("colorize--black"))
+      </legend>
+      @LinkToText("Push Notifications Dev Mode", ViewContext.Url(Routes.UserPushSubscriptions), Attributes().Class("btn txt-small center"))
+    </fieldset>
+  }
+</section>
+@functions {
+    protected override string? PageTitle => Model.User.Name;
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+            var logout = FormWith( ViewContext, Routes.Session ).Method( "delete" ).Data( "controller", "sessions" );
+  <div class="flex-item-justify-start">
+    @LinkBack(ViewContext)
+  </div>
+@:
+  <div class="flex-item-justify-end">
+    @logout.Open()
+      @HiddenFieldTag(ParamNames.Sessions.PushSubscriptionEndpoint, null, Attributes().Data("sessions_target", "pushSubscriptionEndpoint"))
+
+      <button class="btn" data-action="sessions#logout:prevent">
+        @ImageTag(ViewContext, "logout.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Log out</span>
+      </button>
+@Raw("</form>")  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

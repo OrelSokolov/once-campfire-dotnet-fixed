@@ -1,0 +1,57 @@
+@inherits ViewSlice<ComposerPartial>
+@* The content_for :footer block of rooms/show/_composer.html.erb; rooms/show renders it as its footer section. *@
+@{ var room = Model.Room; var form = ComposerFormTag(ViewContext, room.Id); }
+  <div class="composer flex align-end gap position-relative"
+      data-controller="typing-notifications" data-typing-notifications-active-class="typing-indicator--active">
+    @LinkToOpen(Routes.Searches, Attributes().Class("btn flex-item-no-shrink margin-block-end composer__context-btn")
+        .Style("view-transition-name: input-switcher"))
+      @ImageTag(ViewContext, "search.svg", Attributes().Size(20).AriaHidden())
+      <span class="for-screen-reader">Search</span>
+</a>
+    <turbo-frame id="composer-frame">
+      @form.Open()
+        <fieldset data-composer-target="fields" contents>
+          <div class="flex flex-column">
+            <div class="composer__filelist flex flex--align-center gap flex-wrap" data-composer-target="fileList"></div>
+
+            <div class="flex composer__input input input--actor fill-white min-width" style="--input-border-radius: 1.3rem">
+              <div class="flex align-end gap full-width">
+                @ImageTag(ViewContext, "messages-outlined.svg", Attributes().Size(22).AriaHidden().Class("composer__input-hint colorize--black")
+                    .Style("view-transition-name: input-btn;"))
+
+                <div class="flex flex-column flex-item-grow min-width gap">
+                  @RichTextAreaOpen(ViewContext, ParamNames.Messages.Key, ParamNames.Messages.Body, "message", Attributes().Rows(1).Class("input lexxy-content")
+                      .Style("order: -1").Aria("multiline", "true").Aria("label", "Write a message")
+                      .Attribute("permitted-attachment-types", "application/vnd.campfire.mention application/vnd.actiontext.opengraph-embed")
+                      .Data("controller", "unfurl").Data("action", $"{RichTextDataActions} lexxy:change->composer#saveDraft lexxy:insert-link->unfurl#unfurl")
+                      .Data("composer_target", "text"))
+                    @MentionPromptTag(room.Id)
+</lexxy-editor>                </div>
+
+                <label class="btn btn--borderless txt-small flex-item-no-shrink composer__attachment-btn input--file">
+                  @ImageTag(ViewContext, "attachment.svg", Attributes().Size(22).Class("colorize--black").AriaHidden())
+                  <input type="file" data-action="composer#filePicked" multiple />
+                  <span class="for-screen-reader">Attach a file</span>
+                </label>
+
+                <button class="btn btn--borderless txt-small flex-item-no-shrink composer__rich-text-btn" type="button" data-action="composer#toggleToolbar">
+                  @ImageTag(ViewContext, "text-options.svg", Attributes().Size(20).Class("colorize--black").AriaHidden())
+                  <span class="for-screen-reader">Rich text</span>
+                </button>
+
+                @form.ButtonOpen(Attributes().Name("send").Type("submit").Data("action", "composer#submit")
+                    .Class("btn btn--reversed flex-item-no-shrink txt-small"))
+                  @ImageTag(ViewContext, "arrow-up.svg", Attributes().Size(20).AriaHidden())
+                  <span class="for-screen-reader">Send Message</span>
+</button>              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="typing-indicator gap txt-small align-center flex-inline" data-typing-notifications-target="indicator">
+          <div class="typing-indicator__author spinner" data-typing-notifications-target="author"></div>
+        </div>
+
+        @form.HiddenField(ParamNames.Messages.ClientMessageId, null, Attributes().Data("composer_target", "clientid"))
+</form>    </turbo-frame>
+  </div>

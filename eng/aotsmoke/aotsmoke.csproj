@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A Native AOT smoke test of the data layer (docs/development.md): run the published binary and it prints PASS or
+    FAIL per step. Not part of Campfire.slnx or the test run:
+
+      dotnet publish eng/aotsmoke -c Release -r linux-x64
+      eng/aotsmoke/bin/Release/net11.0/linux-x64/publish/aotsmoke
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <IsPackable>false</IsPackable>
+    <!-- Analyze all of Application, not only what the smoke reaches, and report each warning. -->
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Campfire.Application\Campfire.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="Campfire.Application" />
+  </ItemGroup>
+
+</Project>

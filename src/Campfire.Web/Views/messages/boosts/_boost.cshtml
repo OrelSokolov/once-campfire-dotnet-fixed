@@ -1,0 +1,17 @@
+@inherits ViewSlice<BoostPartial>
+@{ var boost = Model.Boost; }
+  <div id="@boost.DomId"
+      class="boost boost-item flex-inline postion--relative max-width align-center fill-white gap"
+      data-controller="boost-delete" data-boost-delete-perform-class="boost--deleting" data-boost-delete-reveal-class="expanded" data-boost-delete-booster-id-value="@boost.Booster.Id">
+    <figure class="avatar boost__avatar flex-item-no-shrink">
+      @AvatarTag(ViewContext, boost.Booster, Attributes().Aria("label", $"{boost.Booster.Name} boosted {boost.Content}"))
+    </figure>
+
+    @ContentTagText("span", Attributes().Role("button").Class(TokenList(("txt-small", true), ("txt-medium", boost.AllEmoji))).Data("action", "click->boost-delete#reveal keydown.enter->boost-delete#reveal:prevent").Data("boost_delete_target", "content"), boost.Content)
+
+    @{ var button = ButtonTo(ViewContext, boost.Path, Attributes().Method("delete").Data("action", "boost-delete#perform").Data("boost_delete_target", "button").Class("btn btn--negative flex-item-justify-end boost__delete")); }
+    @button.Open
+      @ImageTag(ViewContext, "minus.svg", Attributes().Size(20).AriaHidden())
+      <span class="for-screen-reader">Delete this boost</span>
+@button.Close  </div>
+  <span id="delete_boost_accessible_label" class="for-screen-reader">Press enter to delete this boost</span>

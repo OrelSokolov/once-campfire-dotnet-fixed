@@ -1,0 +1,28 @@
+#!/bin/sh
+# Entrypoint for the campfire-candidate parity image.
+#
+# PARITY PATCH: the clock mode is baked in at build time
+# (PARITY_CANDIDATE_CLOCK, parity/bin/candidate build):
+#
+#   app        the .NET candidate (default). No libfaketime: FAKETIME and CAMPFIRE_FROZEN_TIME
+#              are passed through untouched, and the app maps them to its TimeProvider (a
+#              frozen spec to a frozen clock, "@T" to a clock offset to T that ticks). Preloading
+#              libfaketime would also fake Kestrel's HTTP Date header, which Thruster passes
+#              through, and the preload would be inherited by the child Thruster starts.
+#   faketime   the imported behavior, for the Rust port at 3fe9f61:
+#
+# FAKETIME   libfaketime spec: "@2026-03-02 16:00:00" starts the clock at that instant and lets it
+#            tick; "2026-03-02 16:00:00" freezes it there. Monotonic clocks stay real, so Tokio's
+#            timers keep working. Same spec and library as the reference image's entrypoint.
+#            (Thruster is a static Go binary, so its clock stays real, as in the reference.)
+# CAMPFIRE_FROZEN_TIME  the app's own frozen clock (crates/kit/src/clock.rs); parity/bin/candidate
+#            sets it together with a frozen FAKETIME for --freeze.
+set -e
+
+if [ -n "$FAKETIME" ] && [ "${PARITY_CANDIDATE_CLOCK:-app}" = faketime ]; then
+  export LD_PRELOAD=/usr/local/lib/faketime/libfaketime.so.1
+  export FAKETIME_DONT_FAKE_MONOTONIC=1
+  export FAKETIME_DONT_RESET=1
+fi
+
+exec "$@"

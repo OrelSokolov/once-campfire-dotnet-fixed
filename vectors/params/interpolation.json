@@ -1,0 +1,89 @@
+{
+  "ruby": "3.4.10",
+  "action_pack": "8.2.0.alpha",
+  "cases": [
+    {
+      "input": "plain",
+      "output": "plain"
+    },
+    {
+      "input": "",
+      "output": ""
+    },
+    {
+      "input": null,
+      "output": ""
+    },
+    {
+      "input": true,
+      "output": "true"
+    },
+    {
+      "input": false,
+      "output": "false"
+    },
+    {
+      "input": 42,
+      "output": "42"
+    },
+    {
+      "input": -2.5,
+      "output": "-2.5"
+    },
+    {
+      "input": [
+        "j",
+        "x"
+      ],
+      "output": "[\"j\", \"x\"]"
+    },
+    {
+      "input": {
+        "a": "j"
+      },
+      "output": "{\"a\" => \"j\"}"
+    },
+    {
+      "input": {
+        "nested": {
+          "x": [
+            "j",
+            4,
+            true
+          ]
+        }
+      },
+      "output": "{\"nested\" => {\"x\" => [\"j\", 4, true]}}"
+    },
+    {
+      "input": [
+        "quote\"",
+        "back\\slash",
+        "line\n",
+        "tab\t",
+        "\u0007\b\u000b\f\r\u001b",
+        "\u0000\u001f",
+        "a#{b}",
+        "a#@b",
+        "a#$b",
+        "é☃"
+      ],
+      "output": "[\"quote\\\"\", \"back\\\\slash\", \"line\\n\", \"tab\\t\", \"\\a\\b\\v\\f\\r\\e\", \"\\u0000\\u001F\\u007F\", \"a\\#{b}\", \"a\\#@b\", \"a\\#$b\", \"é☃\"]"
+    },
+    {
+      "input": [],
+      "output": "[]"
+    },
+    {
+      "input": {},
+      "output": "{}"
+    },
+    {
+      "input": [
+        [],
+        {}
+      ],
+      "output": "[[], #<ActionController::Parameters {} permitted: false>]"
+    }
+  ]
+}

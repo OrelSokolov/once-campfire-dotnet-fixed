@@ -1,0 +1,4 @@
+@inherits PageSlice<InvolvementPage>
+@TurboFrameForInvolvementTagOpen(Model.RoomId, Model.Kind)
+  @ButtonToChangeInvolvement(ViewContext, Model.RoomId, Model.Kind, Model.Involvement)
+@{ WriteLiteral("</turbo-frame>"); }

@@ -1,0 +1,37 @@
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Run the code-style rules the .editorconfig makes errors (braces on every if, else and loop) in every build. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <Deterministic>true</Deterministic>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <DebugType>embedded</DebugType>
+    <!-- Culture-neutral string APIs are the norm here; the logging-source-generator rule is noisy for a port. -->
+    <NoWarn>$(NoWarn);CA1305;CA1307;CA1309;CA1310;CA1848</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('Tests'))">
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <!-- Test names read as sentences; xUnit fixtures are instantiated by the runner. -->
+    <NoWarn>$(NoWarn);CA1707;CA1515;CA1812</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="$(MSBuildProjectName.EndsWith('Tests'))">
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Thresholds for the code-metrics analyzers (CA1502 cyclomatic complexity). -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)CodeMetricsConfig.txt" />
+  </ItemGroup>
+
+</Project>

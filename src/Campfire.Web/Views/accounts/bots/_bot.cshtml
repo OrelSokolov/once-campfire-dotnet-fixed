@@ -1,0 +1,57 @@
+@inherits ViewSlice<BotPartial>
+@{ var bot = Model.Bot; var user = bot.User; }
+<li class="flex flex-column gap flush fill-shade border-radius pad-block pad-inline-double">
+  <div class="flex align-center gap">
+    <figure class="avatar flex-item--no-shrink" style="--avatar-size: 2.65em;">
+      @AvatarTag(ViewContext, user, Attributes().Loading("lazy"))
+    </figure>
+
+    <div class="min-width">
+      <div class="overflow-ellipsis txt-large"><strong>@user.Name</strong></div>
+    </div>
+
+    @LinkToOpen(Routes.EditAccountBot(user.Id), Attributes().Class("btn flex-item-justify-end").Style($"view-transition-name: chat-bot-{user.Id}"))
+      @ImageTag(ViewContext, "pencil.svg", Attributes().AriaHidden().Size(20))
+      <span class="for-screen-reader">Edit @user.Name</span>
+</a>  </div>
+
+  @foreach (var room in bot.Rooms)
+  {
+      var messagesUrl = ViewContext.Url(Routes.RoomBotMessages(room.Id, bot.BotKey));
+    <fieldset class="gap max-width pad border border-radius">
+      <legend class="min-width txt-align-start pad-inline">
+        <strong class="overflow-ellipsis">@room.Name</strong>
+      </legend>
+
+      @{ var curlTextLine = CurlTextLine(messagesUrl); }
+      <div class="flex align-center gap">
+        @ImageTag(ViewContext, "messages-outlined.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+
+        <div class="flex-item-grow">
+          <input type="text" class="input full-width fill-white" value="@curlTextLine" aria-label="curl command for posting messages" readonly>
+        </div>
+
+        <div class="txt-small">
+          @ButtonToCopyToClipboardOpen(curlTextLine)
+            @ImageTag(ViewContext, "copy-paste.svg", Attributes().AriaHidden().Size(20))
+            <span class="for-screen-reader">Copy message command</span>
+@Raw("</button>")        </div>
+      </div>
+
+      @{ var curlUploadLine = CurlUploadLine(messagesUrl); }
+      <div class="flex align-center gap">
+        @ImageTag(ViewContext, "attachment.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+
+        <div class="flex-item-grow">
+          <input type="text" class="input full-width fill-white" value="@curlUploadLine" aria-label="curl command for posting attachments" readonly>
+        </div>
+
+        <div class="txt-small">
+          @ButtonToCopyToClipboardOpen(curlUploadLine)
+            @ImageTag(ViewContext, "copy-paste.svg", Attributes().AriaHidden().Size(20))
+            <span class="for-screen-reader">Copy attachment command</span>
+@Raw("</button>")        </div>
+      </div>
+    </fieldset>
+  }
+</li>

@@ -1,0 +1,18 @@
+@inherits ViewSlice<OpenRoomUserPartial>
+@{ var user = Model.User; }
+<li class="flex align-center gap margin-none" data-value="@user.Name.ToLowerInvariant()">
+  <figure class="avatar flex-item-no-shrink" style="--avatar-size: 4ch;">
+    @AvatarTag(ViewContext, user, Attributes().Loading("lazy"))
+  </figure>
+
+  <div class="min-width">
+    <div class="overflow-ellipsis fill-shade"><strong>@user.Name</strong></div>
+  </div>
+
+  <hr class="separator" aria-hidden="true">
+
+  @if (Model.CanAdminister)
+  {
+@:    @ImageTag(ViewContext, "check.svg", Attributes().Size(20).Class("colorize--black flex-item-no-shrink").AriaHidden())
+  }
+</li>

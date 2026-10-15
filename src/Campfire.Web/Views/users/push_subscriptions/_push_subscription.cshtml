@@ -1,0 +1,25 @@
+@inherits ViewSlice<PushSubscriptionPartial>
+@{
+    var subscription = Model.PushSubscription;
+    var test = ButtonTo(ViewContext, Routes.UserPushSubscriptionTestNotifications(subscription.Id), Attributes().Class("btn btn--reversed"));
+    var delete = ButtonTo(ViewContext, Routes.UserPushSubscription(subscription.Id), Attributes().Method("delete").Class("btn btn--negative"));
+}
+<li class="flex flex-column margin-none membership-item">
+  <span class="overflow-ellipsis txt-primary txt-undecorated">
+    <strong>@subscription.Browser @subscription.Version on @subscription.Platform</strong><br>
+  </span>
+
+  <span class="flex align-start gap txt-small">
+    <span>@subscription.Endpoint</span>
+
+    <span class="flex align-center gap">
+      @test.Open
+        @ImageTag(ViewContext, "notification-bell-everything.svg", Attributes().AriaHidden().Size(20))
+        <span class="for-screen-reader">Send test notification</span>
+@test.Close
+      @delete.Open
+        @ImageTag(ViewContext, "minus.svg", Attributes().AriaHidden().Size(20))
+        <span class="for-screen-reader">Delete subscription</span>
+@delete.Close    </span>
+  </span>
+</li>

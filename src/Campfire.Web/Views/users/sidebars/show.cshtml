@@ -1,0 +1,64 @@
+@inherits PageSlice<SidebarPage>
+@SidebarTurboFrameTagOpen()
+  @TurboStreamFrom(Model.RoomsStream)
+  @TurboStreamFrom(Model.UserRoomsStream)
+
+  <div class="sidebar__container overflow-y overflow-hide-scrollbar"
+      data-controller="badge-dot"
+      data-badge-dot-unread-class="unread"
+      data-action="rooms-list:unread@window->badge-dot#update rooms-list:read@window->badge-dot#update turbo:submit-start->turbo-frame#unpermanize">
+    <turbo-frame id="direct_rooms_control" target="_top">
+      <div class="directs gap overflow-x overflow-hide-scrollbar">
+        @LinkToOpen(Routes.NewRoomsDirect, Attributes().Class("direct direct__new").Data("turbo_frame", "_self"))
+          <span class="avatar avatar--icon">
+            @ImageTag(ViewContext, "messages-add.svg", Attributes().Size(20).AriaHidden().Class("colorize--black"))
+          </span>
+
+          <span class="direct__author flex max-width min-width border-radius pad-inline-half">
+            <span class="for-screen-reader">New</span>
+            <span class="txt-small overflow-clip">Ping</span>
+          </span>
+</a>
+        <div id="@DomIds.DirectRooms" contents data-controller="sorted-list" data-action="rooms-list:unread@window->sorted-list#updateItem">
+          @await Each(Model.DirectMemberships, RenderSidebarDirect)
+        </div>
+
+        <div contents>
+          @await Each(Model.DirectPlaceholderUsers,
+              user => Partial(Views.users.sidebars.rooms._direct_placeholder.Create(new SidebarDirectPlaceholderPartial(ViewContext, user))))
+        </div>
+      </div>
+    </turbo-frame>
+
+    <div class="rooms position-relative flex flex-column gap">
+      <div id="@DomIds.SharedRooms" contents data-controller="sorted-list">
+        @foreach (var room in Model.OtherMemberships)
+        {
+@:          @await Partial(Views.users.sidebars.rooms._shared.Create(new SidebarSharedPartial(ViewContext, room)))
+        }
+      </div>
+
+      @if (Model.CanCreateRooms)
+      {
+@:        @LinkToOpen(Routes.NewRoomsOpen, Attributes().Class("rooms__new-btn btn room align-center gap txt-reversed").Aria("label", "New Chat Room"))
+@:          @ImageTag(ViewContext, "add.svg", Attributes().Size(20).AriaHidden().Style("view-transition-name: new-room"))
+          @Raw("</a>")
+      }
+    </div>
+
+    <button class="btn sidebar__toggle" data-action="toggle-class#toggle">
+      @ImageTag(ViewContext, "menu.svg", Attributes().Size(20).AriaHidden())
+      <span class="for-screen-reader">Open menu</span>
+    </button>
+  </div>
+
+  <div class="flex align-end sidebar__tools gap justify-end">
+    @LinkToOpen(Routes.UserProfile, Attributes().Class("btn avatar flex-item-no-shrink sidebar__tool"))
+      @ImageTag(ViewContext, Model.CurrentUser.AvatarPath, Attributes().Size(48).AriaHidden().Style($"view-transition-name: avatar-{Model.CurrentUser.Id}"))
+      <span class="for-screen-reader">My Settings</span>
+</a>
+    @LinkToOpen(Routes.EditAccount, Attributes().Class("btn align-center gap txt-reversed sidebar__tool"))
+      @ImageTag(ViewContext, "settings.svg", Attributes().Size(20).AriaHidden().Style("view-transition-name: account-settings"))
+      <span class="for-screen-reader">Account Settings</span>
+</a>  </div>
+@{ WriteLiteral("</turbo-frame>"); }

@@ -1,0 +1,56 @@
+@inherits PageSlice<SessionsNewPage>
+@* sessions/new.html.erb: a proxy named `new` doesn't compile, so the file keeps its format suffix. *@
+@{ var form = FormWith(ViewContext, ViewContext.Url(Routes.Session)).Class("flex flex-column gap"); }
+
+<section class="txt-align-center">
+  <div class="panel @(ViewContext.FlashAlert is not null ? "shake" : "")">
+    @AccountLogoTag(ViewContext, "center margin-block-end txt-xx-large")
+
+    @form.Open()
+      @if (Model.ReturnUrl is not null)
+      {
+          @form.HiddenField(ParamNames.Sessions.ReturnUrl, Model.ReturnUrl)
+      }
+      <fieldset class="flex flex-column gap center-block upad">
+        <legend class="txt-large txt-align-center"><strong>@ViewContext.Account.Name</strong></legend>
+
+        <div class="flex align-center gap">
+          @TranslationButton(ViewContext, "email_address")
+          <label class="flex align-center gap input input--actor txt-large">
+            @form.EmailField(ParamNames.Sessions.EmailAddress, null, Attributes().Required().Class("input").Autofocus().Autocomplete("username")
+                .Placeholder("Enter your email address").Value(Model.EmailAddress))
+            @ImageTag(ViewContext, "email.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+          </label>
+        </div>
+
+        <div class="flex align-center gap">
+          @TranslationButton(ViewContext, "password")
+          <label class="flex align-center gap input input--actor txt-large">
+            @form.PasswordField(ParamNames.Sessions.Password, Attributes().Required().Class("input").Autocomplete("current-password")
+                .Placeholder("Enter your password").Maxlength(72))
+            @ImageTag(ViewContext, "password.svg", Attributes().AriaHidden().Size(24).Class("colorize--black"))
+          </label>
+        </div>
+
+        @form.ButtonOpen(Attributes().Class("btn btn--reversed center txt-large").Type("submit").Name("log_in"))
+          @ImageTag(ViewContext, "arrow-right.svg", Attributes().AriaHidden())
+          <span class="for-screen-reader">Go</span>
+</button>      </fieldset>
+</form>  </div>
+
+  @await Partial(Views.accounts._help_contact.Create(new HelpContactPartial(ViewContext, Model.HelpContact)))
+</section>
+@functions {
+    protected override string? PageTitle => "Sign in";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Head )
+        {
+            // turbo_page_requires_reload provides its tag to :head.
+            WriteHtml( TurboPageRequiresReloadTag( ) );
+        }
+
+        return Task.CompletedTask;
+    }
+}

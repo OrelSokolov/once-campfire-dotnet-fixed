@@ -1,0 +1,6 @@
+#!/bin/sh
+# Public HTTP/TLS, certificate renewal and caching run in the app process. Keep the original
+# port and certificate-directory settings; direct listener runs can explicitly disable the front.
+cd /rails || exit 1
+export CAMPFIRE_FRONT_SERVER="${CAMPFIRE_FRONT_SERVER:-1}"
+exec /rails/bin/start-app

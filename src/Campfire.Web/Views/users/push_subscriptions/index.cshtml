@@ -1,0 +1,27 @@
+@inherits PageSlice<PushSubscriptionsPage>
+
+
+<section class="panel panel--wide flex flex-column gap">
+  <h1 class="txt-align-center txt-large margin-none">Push Notification Subscriptions</h1>
+  <div class="pad-inline fill-shade border-radius" id="push_subscriptions">
+    <menu class="pad flex flex-column gap">
+      @await Each(Model.PushSubscriptions,
+          subscription => Partial(Views.users.push_subscriptions._push_subscription.Create(new PushSubscriptionPartial(ViewContext, subscription))))
+    </menu>
+  </div>
+</section>
+@functions {
+    protected override string? PageTitle => "Push notification subscriptions";
+
+    protected override Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackToLastRoomVisited(ViewContext)
+  </div>
+        }
+
+        return Task.CompletedTask;
+    }
+}

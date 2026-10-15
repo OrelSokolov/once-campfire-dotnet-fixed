@@ -1,0 +1,32 @@
+@inherits PageLayoutSlice<RoomPageLayout>
+@* `render layout: "rooms/layouts/edit", locals: { room: } do ... end`: a page layout inside the application layout. *@
+@{ var room = Model.Room; }
+
+
+<section class="panel txt-align-center" style="view-transition-name: edit-room-@room.Id">
+  @await RenderBodyAsync()
+</section>
+
+@if (Model.CanAdminister)
+{
+  <section class="panel txt-align-center">
+    @ButtonToDeleteRoom(ViewContext, room.Id ?? 0, room.Name, room.Name ?? string.Empty)
+  </section>
+}
+@functions {
+    protected override string? PageTitle => $"Edit settings for {Model.Room.Name}";
+
+    protected override async Task ExecuteSectionAsync( string sectionName )
+    {
+        if ( sectionName == ContentFor.Nav )
+        {
+  <div class="flex-item-justify-start">
+    @LinkBackToLastRoomVisited(ViewContext)
+  </div>
+        }
+        else
+        {
+            await RenderSectionAsync( sectionName );
+        }
+    }
+}

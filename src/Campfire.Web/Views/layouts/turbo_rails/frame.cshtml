@@ -1,0 +1,11 @@
+@inherits RazorLayoutSlice<LayoutModel>
+@* turbo-rails' app/views/layouts/turbo_rails/frame.html.erb (30cd8fc), the layout for Turbo-Frame requests. *@
+<html>
+  <head>
+    @CsrfMetaTags(Model.ViewContext)
+    @await RenderSectionAsync(ContentFor.Head)
+  </head>
+  <body>
+    @await RenderBodyAsync()
+  </body>
+</html>

@@ -1,0 +1,4 @@
+# The root .gitignore ignores **/bin/ and .env.*; the imported harness keeps
+# its scripts in bin/ and the fixed test environment in .env.reference.
+!/bin/
+!/.env.reference

@@ -1,0 +1,4 @@
+@inherits ViewSlice<PresentationPartial>
+<div id="@DomIds.MessagePresentation(Model.Message.ClientMessageId)" dir="auto" data-reply-target="body" data-messages-target="body">
+  @MessagesHelper.MessagePresentation(ViewContext, Model.Message)
+</div>

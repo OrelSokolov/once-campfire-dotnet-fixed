@@ -1,0 +1,22 @@
+@inherits ViewSlice<RoomNavPartial>
+@* The content_for :nav block of rooms/show/_nav.html.erb; rooms/show renders it as its nav section. *@
+@{ var room = Model.Room; }
+  @(ViewContext.Account.HasLogo ? AccountLogoTag(ViewContext) : SafeHtml.Empty)
+
+  @OpenTag("span", Attributes().Class("btn btn--reversed btn--faux room--current"))
+    <h1 class="room__contents txt-medium overflow-ellipsis">
+      @if (room.Kind.IsDirect())
+      {
+        <span class="for-screen-reader">Ping with</span>
+      }
+
+      @room.DisplayName
+    </h1>
+</span>
+
+  @LinkToEditRoomOpen(room.Id, room.Kind)
+    @ImageTag(ViewContext, "menu-dots-horizontal.svg", Attributes().Size(20).AriaHidden())
+    <span class="for-screen-reader">Settings for this @(room.Kind.IsDirect() ? "Ping" : "room")</span>
+</a>
+
+  @await Partial(Views.rooms.involvements._bell.Create(new BellPartial(ViewContext, room)))

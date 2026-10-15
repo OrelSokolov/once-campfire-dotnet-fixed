@@ -1,0 +1,46 @@
+@inherits PageSlice<RoomsShowPage>
+@* rooms/show.html.erb keeps its format suffix: a proxy named `show` would clash with the rooms/show/ namespace. The blank lines below stand for the ERB lines that only fill content_for regions (the nav and composer partials, the sidebar), which leave their newlines behind. *@
+@{ var room = Model.Room; }
+
+
+
+
+@MessageAreaTagOpen(ViewContext, room.Id)
+  @await Partial(Views.messages._template.Create(new MessageTemplatePartial(ViewContext, Model.User)))
+
+  @MessagesTagOpen(ViewContext, room.Id, room.Kind, Model.UpdatedAt)
+    @await Partial(Views.rooms.show._invitation.Create(new InvitationPartial(ViewContext, Model.Invitation, Model.JoinCode)))
+    @await Each(Model.Messages, RenderMessage)
+</div>
+
+  @TurboStreamFrom(Model.MessagesStreamName, RoomMessagesChannel.ClassName)
+  @ButtonToJumpToNewestMessage(ViewContext)
+</div>
+
+@functions {
+    protected override string? PageTitle => Model.Room.DisplayName;
+
+    protected override string? BodyClass => "sidebar";
+
+    protected override async Task ExecuteSectionAsync( string sectionName )
+    {
+        switch ( sectionName )
+        {
+            case ContentFor.Head:
+                // turbo_exempts_page_from_preview provides its tag to :head before the block's own output.
+                WriteHtml( TurboExemptsPageFromPreviewTag( ) );
+@:@Raw("  ")
+  <meta name="current-room-id" content="@Model.Room.Id">
+                break;
+            case ContentFor.Nav:
+                await Partial( Views.rooms.show._nav.Create( new RoomNavPartial( ViewContext, Model.Room ) ) );
+                break;
+            case ContentFor.Sidebar:
+                WriteHtml( UsersHelper.SidebarTurboFrameTag( Routes.UserSidebar, SafeHtml.Empty ) );
+                break;
+            case ContentFor.Footer:
+                await Partial( Views.rooms.show._composer.Create( new ComposerPartial( ViewContext, Model.Room ) ) );
+                break;
+        }
+    }
+}

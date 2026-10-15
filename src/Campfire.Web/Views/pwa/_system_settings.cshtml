@@ -1,0 +1,79 @@
+@inherits ViewSlice<ContextPartial>
+@{ var platform = ViewContext.Platform; var browser = RubyText.Capitalize(platform.Browser); }
+<details class="notifications-help hide-in-browser" data-notifications-target="details">
+  <summary class="btn">
+    @ImageTag(ViewContext, "external/gear.svg", Attributes().AriaHidden().Size(20))
+    <strong>Check your @platform.OperatingSystem settings</strong>
+    @ImageTag(ViewContext, "disclosure.svg", Attributes().AriaHidden().Size(10).Class("disclosure"))
+  </summary>
+
+  @if (platform is { Firefox: true, Android: true })
+  {
+      <ol>
+        <li>Tap the <em>@ImageTag(ViewContext, "menu-dots-vertical.svg", Attributes().Alt("More options").Size(16))</em> menu button.</li>
+        <li>Tap <em>Settings</em>.</li>
+        <li>Tap <em>Notifications</em>.</li>
+        <li>Tap <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the toggle button").Size(22))</em> to <em>Allow @browser notifications</em>.</li>
+      </ol>
+  }
+  else if (platform is { Edge: true, Desktop: true })
+  {
+      <ol>
+        <li>Click <em>Start</em>, then <em>Settings</em>.</li>
+        <li>Go to <em>System &gt; Notification</em>.</li>
+        <li>Click <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the toggle button").Size(22))</em> <em>ON</em> for Campfire.</li>
+      </ol>
+  }
+  else if ((platform.Firefox || platform.Chrome) && platform.Desktop)
+  {
+      <ol>
+        @if (platform.Windows)
+        {
+          <li>Click <em>Start</em>, then <em>Settings</em>.</li>
+          <li>Go to <em>System &gt; Notification</em>.</li>
+          <li>Click <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the toggle button").Size(22))</em> <em>ON</em> for Campfire.</li>
+        }
+        else
+        {
+          <li>Click <em aria-label="the Apple menu">@AppleLogo</em> in the top left.</li>
+          <li>Click <em>System Settings…</em>.</li>
+          <li>Click <em>Notifications</em>.</li>
+          <li>Click <em>Campfire</em>.</li>
+          <li>Click <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the allow notifications switch").Size(22))</em> to <em>Allow notifications</em>.</li>
+        }
+      </ol>
+  }
+  else if (platform is { Safari: true, Desktop: true })
+  {
+      <ol>
+        <li>Click <em aria-label="the Apple menu">@AppleLogo</em> in the top left.</li>
+        <li>Click <em>System Settings…</em>.</li>
+        <li>Click <em>Notifications</em>.</li>
+        <li>Click <em>Campfire</em>.</li>
+        <li>Click <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the allow notifications switch").Size(22))</em> to <em>Allow notifications</em>.</li>
+      </ol>
+  }
+  else if ((platform.Safari || platform.Chrome) && platform.Ios)
+  {
+      <ol>
+        <li>Open the <em>@ImageTag(ViewContext, "external/gear.svg", Attributes().AriaHidden().Size(20))</em> Settings app.</li>
+        <li>Scroll to and tap <em>Campfire</em>.</li>
+        <li>Tap <em>Notifications</em>.</li>
+        <li>Tap <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the allow notifications switch button").Size(22))</em> to <em>Allow Notifications</em>.</li>
+      </ol>
+  }
+  else if (platform is { Chrome: true, Android: true })
+  {
+      <ol>
+        <li>Open the <em>@ImageTag(ViewContext, "external/gear.svg", Attributes().AriaHidden().Size(20))</em> Settings app.</li>
+        <li>Tap <em>Notifications</em>.</li>
+        <li>Tap <em>App notifications</em>.</li>
+        <li>Scroll to <em>Campfire</em>.</li>
+        <li>Tap <em>@ImageTag(ViewContext, "external/switch.svg", Attributes().Alt("the switch").Size(22))</em> to <em>Allow Notifications</em>.</li>
+      </ol>
+  }
+  else
+  {
+      <p>Ensure notifications are allowed for @browser in your system settings.</p>
+  }
+</details>

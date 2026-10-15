@@ -1,0 +1,41 @@
+@inherits ViewSlice<TransferPartial>
+@{ var url = ViewContext.Url(Routes.SessionTransfer(Model.TransferId)); }
+
+<fieldset>
+  <legend class="gap">
+    @ImageTag(ViewContext, "laptop.svg", Attributes().AriaHidden().Size(36).Class("colorize--black"))
+    @ImageTag(ViewContext, "transfer.svg", Attributes().AriaHidden().Size(36).Class("colorize--black"))
+    @ImageTag(ViewContext, "mobile-phone.svg", Attributes().AriaHidden().Size(36).Class("colorize--black"))
+  </legend>
+
+
+  <div class="flex flex-column gap">
+    @if (!ViewContext.IsCurrentUser(Model.User.Id))
+    {
+      <div class="flex align-center gap justify-center">
+        @ImageTag(ViewContext, "crown.svg", Attributes().Size(16).AriaHidden().Class("flex-item-no-shrink colorize--black"))
+        <label for="session_transfer_url">Share to get them back into their account</label>
+      </div>
+    }
+    else
+    {
+      <label for="session_transfer_url" class="for-screen-reader">Use this link to login automatically on another device</label>
+    }
+
+    <input type="text" class="input" value="@url" id="session_transfer_url" readonly>
+
+    <div class="flex align-center center gap">
+      @LinkToZoomQrCodeOpen(url)
+        <span class="for-screen-reader">Show auto-login QR code</span>
+        @ImageTag(ViewContext, "qr-code.svg", Attributes().AriaHidden().Size(20).Class("colorize--black"))
+</a>
+      @ButtonToCopyToClipboardOpen(url)
+        <span class="for-screen-reader">Copy auto-login link</span>
+        @ImageTag(ViewContext, "copy-paste.svg", Attributes().AriaHidden().Size(20).Class("flex-item-no-shrink colorize--black"))
+</button>
+      @WebShareSessionButtonOpen(url, "Your sign-in link", "This is your own private sign-in URL, DO NOT SHARE IT. Use it to sign-in on another device or if you get locked out.")
+        <span class="for-screen-reader">Share auto-login link</span>
+        @ImageTag(ViewContext, "share.svg", Attributes().AriaHidden().Size(20).Class("flex-item-no-shrink colorize--black"))
+</button>    </div>
+  </div>
+</fieldset>

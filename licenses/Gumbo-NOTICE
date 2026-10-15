@@ -1,0 +1,10 @@
+Gumbo HTML parser tree construction, as distributed by Nokogiri 1.19.4.
+Copyright 2017-2018 Craig Barnes.
+Copyright 2010 Google Inc.
+Licensed under the Apache License, Version 2.0. See Gumbo-LICENSE.
+
+The GumboTreeBuilder and GumboTagSets files under
+src/Campfire.Application/RichText/Html/Parsing are C# adaptations of
+gumbo-parser/src/parser.c and insertion_mode.h. They use AngleSharp's
+tokenizer and omit native parse errors, source locations, and parse flags.
+The source comments identify this adaptation and its changes.

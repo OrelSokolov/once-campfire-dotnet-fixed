@@ -1,0 +1,31 @@
+@inherits PageSlice<BoostsNewPage>
+@* messages/boosts/new.html.erb: a proxy named `new` doesn't compile, so the file keeps its format suffix. *@
+@{
+    var message = Model.Message;
+    var form = FormWith(ViewContext, message.BoostsPath).Model(ParamNames.Boosts.Key).Class("boost__form flex align-center gap expanded")
+        .Data("controller", "form scroll-into-view").Data("turbo_frame", DomIds.MessageBoostingFrame(message.ClientMessageId))
+        .Data("action", "keydown.esc->form#cancel");
+}
+@TurboFrameTagOpen(DomIds.MessageNewBoostFrame(message.ClientMessageId))
+  <div class="boost flex-inline postion--relative max-width fill-white" style="--column-gap: var(--inline-space-half)">
+    @form.Open()
+      <label class="boost__form-label flex gap" style="--column-gap: 0.7ch;" role="button" tabindex="0" aria-label="Add a boost">
+        <figure class="avatar boost__avatar flex-item-no-shrink">
+          @AvatarTag(ViewContext, Model.User)
+          <span class="for-screen-reader">@Model.User.Name</span>
+        </figure>
+
+        @form.TextField(ParamNames.Boosts.Content, null, Attributes().Id(null).Autofocus().Autocomplete("off").Attribute("autocorrect", "off").Maxlength(16)
+            .Required().Attribute("pattern", "\\S+.*").Data("boost_form_target", "input").Class("input input--boost txt-small"))
+      </label>
+
+      @form.ButtonOpen(Attributes().Class("btn btn--reversed").Type("submit"))
+        @ImageTag(ViewContext, "check.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Submit</span>
+</button>
+      @LinkToOpen(message.BoostsPath, Attributes().Data("turbo_frame", DomIds.MessageBoosts(message.ClientMessageId)).Data("form_target", "cancel")
+          .Class("btn btn--negative"))
+        @ImageTag(ViewContext, "minus.svg", Attributes().AriaHidden())
+        <span class="for-screen-reader">Cancel</span>
+</a></form>  </div>
+@{ WriteLiteral("</turbo-frame>"); }

@@ -1,0 +1,16 @@
+{
+  "html_specials": "\"\\u003ca href=\\\"x\\\"\\u003e\\u0026amp;\\u003c/a\\u003e 'single' \\u003c/script\\u003e\"",
+  "separators": "\"line para end\"",
+  "non_ascii": "\"Zoë café naïve 日本語 ’\"",
+  "astral": "\"😀🔥\"",
+  "controls": "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"",
+  "backslash_slash": "\"a\\\\b/c\"",
+  "integer_big": "18446744073709551616",
+  "floats": "[0.0,-0.0,1.0,0.1,1.5,100.0,1e+15,1e+16,1e+20,0.00001,0.00000015,123456789.12345679,1.1805916207174113e+21]",
+  "float_special": "[null,null,null]",
+  "big_decimal": "[\"1.5\",\"0.1\",\"100000000000000000000.0\"]",
+  "times": "{\"time_utc\":\"2026-03-02T16:00:00.000Z\",\"time_usec\":\"2026-03-02T16:00:00.123Z\",\"time_offset\":\"2026-03-02T17:00:00.000+01:00\",\"time_with_zone\":\"2026-03-02T16:00:00.999Z\",\"time_with_zone_berlin\":\"2026-03-02T17:00:00.000+01:00\",\"date\":\"2026-03-02\",\"datetime\":\"2026-03-02T16:00:00.000+00:00\",\"duration\":180}",
+  "symbols_and_nil": "{\"sym\":\"value\",\"nil\":null,\"true\":true,\"false\":false,\"string key\":[\"a\",null]}",
+  "nested": "{\"a\":[{\"b\":{\"c\":[1,\"two\",3.0]}}]}",
+  "hostile": "\"\\u003cb\\u003eZoë\\u003c/b\\u003e \\u0026 \\\"Ünïcødé\\\" 'quotes'  line para 😀 tab\\tnewline\\n bs\\\\ slash/ \\u003c/script\\u003e\""
+}

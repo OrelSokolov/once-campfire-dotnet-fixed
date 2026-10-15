@@ -1,0 +1,5 @@
+@inherits ViewSlice<MentionPartial>
+@* A span rather than a div: mentions render inline inside the <p> paragraphs
+   the editor produces, and block elements would make the browser split the
+   paragraph when parsing *@
+<span class="mention" sgid="@Model.User.AttachableSignedGlobalId">@AvatarTag(ViewContext, Model.User.User) @Model.User.User.Name</span>

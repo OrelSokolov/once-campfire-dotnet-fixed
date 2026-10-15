@@ -1,0 +1,30 @@
+@inherits ViewSlice<ClosedRoomUserPartial>
+@{ var user = Model.User; var form = Model.Form; }
+<li class="flex align-center gap margin-none" data-value="@user.Name.ToLowerInvariant()">
+  <figure class="avatar flex-item-no-shrink" style="--avatar-size: 4ch;">
+    @AvatarTag(ViewContext, user, Attributes().Loading("lazy"))
+  </figure>
+
+  <div class="min-width">
+    <div class="overflow-ellipsis fill-shade"><strong>@user.Name</strong></div>
+  </div>
+
+  <hr class="separator" aria-hidden="true">
+
+  @if (form.CanAdminister)
+  {
+    if (user.Id == form.CurrentUserId && form.Room.Id is null)
+    {
+@:      @HiddenFieldTag(ParamNames.Rooms.UserIdsField, user.Id.ToString(CultureInfo.InvariantCulture), Attributes().Id(null))
+@:      @ImageTag(ViewContext, "check.svg", Attributes().Size(20).Class("colorize--black flex-item-no-shrink").AriaHidden())
+    }
+    else
+    {
+      <label class="switch flex-item-no-shrink">
+        @CheckBoxTag(ParamNames.Rooms.UserIdsField, user.Id.ToString(CultureInfo.InvariantCulture), Model.Selected, Attributes().Class("switch__input").Id(null))
+        <span class="switch__btn round"></span>
+        <span class="for-screen-reader">Give @user.Name access to this room</span>
+      </label>
+    }
+  }
+</li>
