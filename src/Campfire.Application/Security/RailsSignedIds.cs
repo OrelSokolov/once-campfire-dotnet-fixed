@@ -140,6 +140,10 @@ public static class RailsSignedIds
         return Convert.FromBase64String( normalized.PadRight( normalized.Length + (4 - normalized.Length % 4) % 4, '=' ) );
     }
 
-    private static byte[] Hmac( HashAlgorithmName hash, byte[] key, byte[] data ) =>
-        hash == HashAlgorithmName.SHA256 ? HMACSHA256.HashData( key, data ) : HMACSHA1.HashData( key, data );
+    private static byte[] Hmac( HashAlgorithmName hash, byte[] key, byte[] data )
+    {
+#pragma warning disable CA5350 // Rails' pre-7.1 signed_id digests are HMAC-SHA1; verification must match the format.
+        return hash == HashAlgorithmName.SHA256 ? HMACSHA256.HashData( key, data ) : HMACSHA1.HashData( key, data );
+#pragma warning restore CA5350
+    }
 }

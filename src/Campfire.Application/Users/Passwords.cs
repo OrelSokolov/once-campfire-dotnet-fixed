@@ -1,5 +1,9 @@
 using BCrypt.Net;
 using Microsoft.AspNetCore.Identity;
+
+// Alias: with `using BCrypt.Net;` the name `BCrypt` in a qualified call binds to the namespace,
+// so the class needs an explicit alias.
+using BCryptNet = global::BCrypt.Net.BCrypt;
 using Microsoft.Extensions.Options;
 
 namespace Campfire.Application.Users;
@@ -28,7 +32,7 @@ public static class Passwords
             // to Identity V3 by VerifyResult's SuccessRehashNeeded path on the next successful login.
             try
             {
-                return BCrypt.Verify( password, digest );
+                return BCryptNet.Verify( password, digest );
             }
             catch ( SaltParseException )
             {
@@ -54,7 +58,7 @@ public static class Passwords
             // Rails compatibility: a verified bcrypt digest always rehashes to Identity V3.
             try
             {
-                return BCrypt.Verify( password, digest )
+                return BCryptNet.Verify( password, digest )
                     ? PasswordVerificationResult.SuccessRehashNeeded
                     : PasswordVerificationResult.Failed;
             }

@@ -97,7 +97,7 @@ public static class BrowserAuthentication
         }
 
         var key = Rfc2898DeriveBytes.Pbkdf2( Encoding.UTF8.GetBytes( secret ), Encoding.UTF8.GetBytes( "signed cookie" ), 1000, HashAlgorithmName.SHA1, 64 );
-        var digest = Convert.ToHexString( HMAC.HashData( HashAlgorithmName.SHA256, key, Encoding.UTF8.GetBytes( token ) ) ).ToLowerInvariant( CultureInfo.InvariantCulture );
+        var digest = Convert.ToHexString( HMACSHA256.HashData( key, Encoding.UTF8.GetBytes( token ) ) ).ToLower( CultureInfo.InvariantCulture );
         var flags = httpContext.Request.IsHttps ? "; secure" : "";
         httpContext.Response.Headers.Append( "Set-Cookie",
             $"session_token={Uri.EscapeDataString( token )}--{digest}; path=/; httponly; samesite=lax{flags}; max-age={LifetimeDays * 24 * 60 * 60}" );
