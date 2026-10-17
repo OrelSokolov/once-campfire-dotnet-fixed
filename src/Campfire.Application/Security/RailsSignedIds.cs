@@ -8,7 +8,7 @@ namespace Campfire.Application.Security;
 /// <summary>
 /// Verifies <c>ActiveRecord::SignedId</c> tokens minted by a Rails installation that owns the same database:
 /// <c>Base64(json) + "--" + hexdigest(HMAC)</c> in the Rails metadata envelope, keyed by
-/// <c>ActiveSupport::KeyGenerator</c> (PBKDF2-HMAC-SHA1, 1000 iterations) over <c>SECRET_KEY_BASE</c> with the
+/// <c>ActiveSupport::KeyGenerator</c> (PBKDF2-HMAC-SHA256, 1000 iterations) over <c>SECRET_KEY_BASE</c> with the
 /// <c>active_record/signed_id</c> salt. SHA-256 digests first (the Rails 7.1+ default), SHA-1 as the fallback.
 /// Native Data Protection tokens remain authoritative; this reads only tokens Rails signed before a migration.
 /// </summary>
@@ -59,7 +59,7 @@ public static class RailsSignedIds
             return null;
         }
 
-        _key = Rfc2898DeriveBytes.Pbkdf2( Encoding.UTF8.GetBytes( secret ), Encoding.UTF8.GetBytes( Salt ), 1000, HashAlgorithmName.SHA1, 64 );
+        _key = Rfc2898DeriveBytes.Pbkdf2( Encoding.UTF8.GetBytes( secret ), Encoding.UTF8.GetBytes( Salt ), 1000, HashAlgorithmName.SHA256, 64 );
         return _key;
     }
 
