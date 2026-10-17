@@ -66,46 +66,26 @@ public static class RailsSignedIds
 
         var data = signedId[..separator];
         var digest = signedId[(separator + 2)..];
-        var expected = Convert.ToHexString( HMAC.HashData( hash, key, Encoding.UTF8.GetBytes( data ) ) ).ToLowerInvariant( CultureInfo.InvariantCulture );
-        if ( !CryptographicOperations.FixedTimeEquals( Encoding.UTF8.GetBytes( expected ), Encoding.UTF8.GetBytes( digest.ToLowerInvariant( CultureInfo.InvariantCulture ) ) ) )
-        {
-            return null;
-        }
+        return DigestMatches( key, hash, data, digest ) ? EnvelopeId( data, purpose, now ) : null;
+    }
 
+    private static bool DigestMatches( byte[] key, HashAlgorithmName hash, string data, string digest )
+    {
+        var expected = Convert.ToHexString( Hmac( hash, key, Encoding.UTF8.GetBytes( data ) ) ).ToLower( CultureInfo.InvariantCulture );
+        var provided = Encoding.UTF8.GetBytes( digest.ToLower( CultureInfo.InvariantCulture ) );
+        return CryptographicOperations.FixedTimeEquals( Encoding.UTF8.GetBytes( expected ), provided );
+    }
+
+    private static long? EnvelopeId( string data, string? purpose, DateTimeOffset now )
+    {
         try
         {
             using var document = JsonDocument.Parse( Decode( data ) );
-            if ( document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty( "_rails", out var envelope )
-                || envelope.ValueKind != JsonValueKind.Object )
-            {
-                return null;
-            }
-
-            if ( envelope.TryGetProperty( "pur", out var declared ) && declared.ValueKind == JsonValueKind.String && declared.GetString( ) != purpose )
-            {
-                return null;
-            }
-
-            if ( envelope.TryGetProperty( "exp", out var expiry ) && expiry.ValueKind == JsonValueKind.String
-                && DateTimeOffset.TryParse( expiry.GetString( ), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var expiresAt )
-                && now >= expiresAt )
-            {
-                return null;
-            }
-
-            if ( envelope.TryGetProperty( "data", out var plain ) )
-            {
-                return plain.ValueKind == JsonValueKind.Number && plain.TryGetInt64( out var id ) ? id : null;
-            }
-
-            // The standalone-gem envelope keeps the message in strict base64 of the JSON payload.
-            if ( envelope.TryGetProperty( "message", out var wrapped ) && wrapped.ValueKind == JsonValueKind.String )
-            {
-                using var inner = JsonDocument.Parse( Decode( wrapped.GetString( )! ) );
-                return inner.RootElement.ValueKind == JsonValueKind.Number && inner.RootElement.TryGetInt64( out var id ) ? id : null;
-            }
-
-            return null;
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty( "_rails", out var envelope )
+                && envelope.ValueKind == JsonValueKind.Object
+                ? ReadEnvelope( envelope, purpose, now )
+                : null;
         }
         catch ( Exception error ) when ( error is FormatException or ArgumentException or JsonException )
         {
@@ -113,10 +93,53 @@ public static class RailsSignedIds
         }
     }
 
+    private static long? ReadEnvelope( JsonElement envelope, string? purpose, DateTimeOffset now ) =>
+        PurposeMatches( envelope, purpose ) && !Expired( envelope, now ) ? PayloadId( envelope ) : null;
+
+    private static bool PurposeMatches( JsonElement envelope, string? purpose ) =>
+        !envelope.TryGetProperty( "pur", out var declared ) || declared.ValueKind != JsonValueKind.String || declared.GetString( ) == purpose;
+
+    private static bool Expired( JsonElement envelope, DateTimeOffset now ) =>
+        envelope.TryGetProperty( "exp", out var expiry ) && expiry.ValueKind == JsonValueKind.String
+        && DateTimeOffset.TryParse( expiry.GetString( ), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var expiresAt )
+        && now >= expiresAt;
+
+    private static long? PayloadId( JsonElement envelope )
+    {
+        if ( envelope.TryGetProperty( "data", out var plain ) )
+        {
+            return AsId( plain );
+        }
+
+        // The standalone-gem envelope keeps the message in strict base64 of the JSON payload.
+        return envelope.TryGetProperty( "message", out var wrapped ) && wrapped.ValueKind == JsonValueKind.String
+            ? AsDecodedId( wrapped.GetString( )! )
+            : null;
+    }
+
+    private static long? AsDecodedId( string encoded )
+    {
+        try
+        {
+            using var inner = JsonDocument.Parse( Decode( encoded ) );
+            return AsId( inner.RootElement );
+        }
+        catch ( Exception error ) when ( error is FormatException or ArgumentException or JsonException )
+        {
+            return null;
+        }
+    }
+
+    private static long? AsId( JsonElement element ) =>
+        element.ValueKind == JsonValueKind.Number && element.TryGetInt64( out var id ) ? id : null;
+
     /// <summary>Base64 in either alphabet, like <c>MessageVerifier#decode</c>, which retries with the other one.</summary>
     private static byte[] Decode( string encoded )
     {
         var normalized = encoded.Replace( '-', '+' ).Replace( '_', '/' );
         return Convert.FromBase64String( normalized.PadRight( normalized.Length + (4 - normalized.Length % 4) % 4, '=' ) );
     }
+
+    private static byte[] Hmac( HashAlgorithmName hash, byte[] key, byte[] data ) =>
+        hash == HashAlgorithmName.SHA256 ? HMACSHA256.HashData( key, data ) : HMACSHA1.HashData( key, data );
 }
