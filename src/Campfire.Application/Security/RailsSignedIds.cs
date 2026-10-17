@@ -33,6 +33,18 @@ public static class RailsSignedIds
             ?? Verify( key, signedId, purpose, now, HashAlgorithmName.SHA1, 40 );
     }
 
+    /// <summary>The on-wire purpose of a Rails signed id: the underscored model name, a slash, then the purpose.</summary>
+    public static string? Purpose( string modelName, string? purpose )
+    {
+        var snake = new StringBuilder( modelName.Length + 4 );
+        foreach ( var ch in modelName )
+        {
+            _ = char.IsUpper( ch ) ? snake.Append( snake.Length > 0 ? "_" : "" ).Append( char.ToLowerInvariant( ch ) ) : snake.Append( ch );
+        }
+
+        return purpose is null ? snake.ToString( ) : $"{snake}/{purpose}";
+    }
+
     /// <summary>Derives the verifier key once per process; without <see cref="SecretVariable"/> every token is native.</summary>
     public static byte[]? Key( )
     {

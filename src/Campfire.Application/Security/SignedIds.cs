@@ -46,7 +46,8 @@ public sealed class SignedIds( ITokenProtector tokens )
 
         // Rails compatibility: a token Rails signed over SECRET_KEY_BASE (a database migrated from a Rails
         // installation) verifies against its MessageVerifier; the native token stays authoritative.
-        return RailsSignedIds.Verify( signedId, purpose, now );
+        // Rails' SignedId combines the purpose as "<underscored model>/<purpose>" on the wire.
+        return RailsSignedIds.Verify( signedId, RailsSignedIds.Purpose( modelName, purpose ), now );
     }
 
     /// <summary>The token purpose of a signed id: the namespace, the model and the purpose.</summary>
