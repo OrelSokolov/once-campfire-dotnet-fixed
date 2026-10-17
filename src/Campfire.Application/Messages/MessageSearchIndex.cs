@@ -72,7 +72,8 @@ public static class MessageSearchIndex
 
     /// <summary>
     /// <c>Current.user.reachable_messages.search(query).last(100)</c> (<c>SearchesController</c>): matches in the
-    /// user's rooms, the newest 100, oldest first.
+    /// user's rooms, the newest 100 by id, oldest first. The through-association load orders by primary key, not
+    /// <c>created_at</c>, so a seed where the two orders disagree renders id-ascending — as the Rails reference does.
     /// </summary>
     public static List<Message> SearchReachable( CampfireDb db, long userId, string query )
     {
@@ -82,7 +83,7 @@ public static class MessageSearchIndex
                 $"SELECT {Columns.Messages} FROM messages {MessageQueries.ReachableJoin} " +
                 "join message_search_index idx on messages.id = idx.rowid " +
                 $"WHERE {MessageQueries.ReachableWhere} AND (idx.body match @query) " +
-                "ORDER BY messages.created_at DESC LIMIT @limit",
+                "ORDER BY messages.id DESC LIMIT @limit",
                 new
                 {
                     userId,

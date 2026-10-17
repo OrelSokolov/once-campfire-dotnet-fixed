@@ -39,7 +39,14 @@ public sealed class SignedIds( ITokenProtector tokens )
     public long? Verify( string modelName, string signedId, string? purpose, DateTimeOffset now, out DateTimeOffset? expiresAt )
     {
         var value = tokens.Unprotect( signedId, CombinePurposes( modelName, purpose ), now, out expiresAt );
-        return long.TryParse( value, NumberStyles.None, CultureInfo.InvariantCulture, out var id ) ? id : null;
+        if ( long.TryParse( value, NumberStyles.None, CultureInfo.InvariantCulture, out var id ) )
+        {
+            return id;
+        }
+
+        // Rails compatibility: a token Rails signed over SECRET_KEY_BASE (a database migrated from a Rails
+        // installation) verifies against its MessageVerifier; the native token stays authoritative.
+        return RailsSignedIds.Verify( signedId, purpose, now );
     }
 
     /// <summary>The token purpose of a signed id: the namespace, the model and the purpose.</summary>

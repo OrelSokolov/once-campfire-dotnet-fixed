@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Campfire.Application.Data;
+using Campfire.Application.Security;
 using Campfire.Application.Sessions;
 using Campfire.Web.Http;
 using Campfire.Web.Policy;
@@ -67,7 +68,7 @@ public static class BrowserAuthentication
         return services;
     }
 
-    public static Task SignInAsync( HttpContext httpContext, CurrentSession session )
+    public static async Task SignInAsync( HttpContext httpContext, CurrentSession session )
     {
         Claim[] claims =
         [
@@ -77,8 +78,34 @@ public static class BrowserAuthentication
         var identity = new ClaimsIdentity( claims, Scheme );
         httpContext.Features.Set( new AuthenticatedSession( session ) );
         httpContext.User = new ClaimsPrincipal( identity );
-        return httpContext.SignInAsync( Scheme, httpContext.User, new AuthenticationProperties { IsPersistent = true } );
+        await httpContext.SignInAsync( Scheme, httpContext.User, new AuthenticationProperties { IsPersistent = true } );
+        AppendRailsSessionTokenCookie( httpContext, session.Token );
     }
+
+    /// <summary>
+    /// Rails names its authentication cookie <c>session_token</c> (the session's token, signed with the cookie
+    /// verifier over <c>SECRET_KEY_BASE</c>); clients written against that contract key on the name. Mirror the
+    /// session token under it, signed the same way, so the native <c>.Campfire.Auth</c> ticket stays authoritative.
+    /// Without <c>SECRET_KEY_BASE</c> (a fresh installation) the alias is skipped.
+    /// </summary>
+    private static void AppendRailsSessionTokenCookie( HttpContext httpContext, string token )
+    {
+        var secret = Environment.GetEnvironmentVariable( RailsSignedIds.SecretVariable );
+        if ( string.IsNullOrEmpty( secret ) )
+        {
+            return;
+        }
+
+        var key = Rfc2898DeriveBytes.Pbkdf2( Encoding.UTF8.GetBytes( secret ), Encoding.UTF8.GetBytes( "signed cookie" ), 1000, HashAlgorithmName.SHA1, 64 );
+        var digest = Convert.ToHexString( HMAC.HashData( HashAlgorithmName.SHA256, key, Encoding.UTF8.GetBytes( token ) ) ).ToLowerInvariant( CultureInfo.InvariantCulture );
+        var flags = httpContext.Request.IsHttps ? "; secure" : "";
+        httpContext.Response.Headers.Append( "Set-Cookie",
+            $"session_token={Uri.EscapeDataString( token )}--{digest}; path=/; httponly; samesite=lax{flags}; max-age={LifetimeDays * 24 * 60 * 60}" );
+    }
+
+    /// <summary>Expires the Rails-named alias alongside the native ticket (<c>terminate_current_session_for</c>).</summary>
+    public static void DeleteRailsSessionTokenCookie( HttpContext httpContext ) =>
+        httpContext.Response.Headers.Append( "Set-Cookie", "session_token=; path=/; max-age=0" );
 
     public static async Task<CurrentSession?> ReadSessionAsync( HttpContext httpContext, CancellationToken cancellationToken )
     {

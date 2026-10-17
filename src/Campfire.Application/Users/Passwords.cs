@@ -1,3 +1,4 @@
+using BCrypt.Net;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 
@@ -21,6 +22,20 @@ public static class Passwords
             return false;
         }
 
+        if ( IsBCryptDigest( digest ) )
+        {
+            // A digest minted by a Rails installation (bcrypt, "$2..." formats): verified here, then upgraded
+            // to Identity V3 by VerifyResult's SuccessRehashNeeded path on the next successful login.
+            try
+            {
+                return BCrypt.Verify( password, digest );
+            }
+            catch ( SaltParseException )
+            {
+                return false;
+            }
+        }
+
         try
         {
             return VerifyResult( password, digest ) != PasswordVerificationResult.Failed;
@@ -34,6 +49,21 @@ public static class Passwords
 
     public static PasswordVerificationResult VerifyResult( string password, string digest )
     {
+        if ( IsBCryptDigest( digest ) )
+        {
+            // Rails compatibility: a verified bcrypt digest always rehashes to Identity V3.
+            try
+            {
+                return BCrypt.Verify( password, digest )
+                    ? PasswordVerificationResult.SuccessRehashNeeded
+                    : PasswordVerificationResult.Failed;
+            }
+            catch ( SaltParseException )
+            {
+                return PasswordVerificationResult.Failed;
+            }
+        }
+
         try
         {
             return Hasher.VerifyHashedPassword( User, digest, password );
@@ -43,6 +73,10 @@ public static class Passwords
             return PasswordVerificationResult.Failed;
         }
     }
+
+    /// <summary>Rails' <c>has_secure_password</c> digests: bcrypt's <c>$2</c>, <c>$2a</c>, <c>$2b</c> and <c>$2y</c>.</summary>
+    private static bool IsBCryptDigest( string digest ) =>
+        digest.Length >= 4 && digest[0] == '$' && digest[1] == '2' && (digest[2] == '$' || digest[3] == '$');
 
     private static PasswordHasher<object> Create( int iterations )
     {

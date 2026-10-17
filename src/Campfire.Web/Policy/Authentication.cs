@@ -69,6 +69,7 @@ public static partial class Authentication
         }
 
         await requestContext.HttpContext.SignOutAsync( BrowserAuthentication.Scheme );
+        BrowserAuthentication.DeleteRailsSessionTokenCookie( requestContext.HttpContext );
         if ( requestContext.CurrentUser( ) is { } user )
         {
             try
