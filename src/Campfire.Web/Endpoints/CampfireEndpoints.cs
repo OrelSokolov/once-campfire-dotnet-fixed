@@ -62,7 +62,9 @@ public static class CampfireEndpoints
         SidebarsEndpoints.MapEndpoints( endpoints );
         WelcomeEndpoints.MapEndpoints( endpoints );
 
-        endpoints.MapMethods( EndpointPaths.Campfire.Up, HttpMethodSets.GetAndHead, ( ) => TypedResults.Text( "OK" ) )
+        // Rails' rails/health#show page (the reference serves this exact 73-byte HTML).
+        endpoints.MapMethods( EndpointPaths.Campfire.Up, HttpMethodSets.GetAndHead,
+                ( ) => TypedResults.Text( "<!DOCTYPE html><html><body style=\"background-color: green\"></body></html>", ContentTypes.HtmlUtf8 ) )
             .AllowAnonymous( );
 
         endpoints.MapMethods(
